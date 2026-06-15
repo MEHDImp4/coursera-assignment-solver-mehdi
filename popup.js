@@ -113,6 +113,59 @@ document.getElementById("completeVideosBtn").addEventListener("click", async () 
     resetButton();
   }
 });
+document.getElementById("getGradedLinksBtn").addEventListener("click", async () => {
+  const resultDiv = document.getElementById("result");
+  resultDiv.style.display = "block";
+  resultDiv.innerText = "Intercepting & extracting links...";
+
+  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  chrome.tabs.sendMessage(tab.id, { action: "getGradedAssignments" }, (response) => {
+    if (chrome.runtime.lastError) {
+      resultDiv.innerText = "Please refresh the Coursera page to use this feature.";
+      return;
+    }
+    
+    if (response && response.error) {
+       resultDiv.style.color = "#ef4444";
+       resultDiv.innerText = response.error;
+       return;
+    }
+    
+    if (response && response.data && response.data.length > 0) {
+      resultDiv.style.color = "var(--foreground)";
+      let html = `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+          <strong style="font-size: 12px; color: var(--foreground);">Graded Assignments:</strong>
+        </div>
+        <ul style="padding-left:16px; font-size:12px; color:var(--foreground); overflow-y:auto; max-height:120px;">`;
+      
+      response.data.forEach(item => {
+         html += `<li style="margin-bottom:4px;"><a href="${item.link}" target="_blank" style="color:var(--primary); text-decoration:none;">${item.name}</a> <span style="color:var(--muted); font-size:10px;">(${item.type})</span></li>`;
+      });
+      html += `</ul>`;
+      const rawText = response.data.map(i => i.link).join("\n");
+      html += `<div style="margin-top: 8px;"><button id="copyLinksBtn" class="btn btn-secondary" style="height: 24px; padding: 0 10px; width: auto; font-size: 11px;">Copy All Links</button></div>`;
+      
+      resultDiv.innerHTML = html;
+
+      document.getElementById("copyLinksBtn").addEventListener("click", (e) => {
+         navigator.clipboard.writeText(rawText).then(() => {
+            e.target.innerText = "Copied!";
+            e.target.style.backgroundColor = "#16a34a";
+            e.target.style.color = "#fff";
+            setTimeout(() => {
+              e.target.innerText = "Copy All Links";
+              e.target.style.backgroundColor = "var(--secondary)";
+              e.target.style.color = "var(--secondary-text)";
+            }, 2000);
+         });
+      });
+    } else {
+      resultDiv.innerText = "No graded assignments found.";
+    }
+  });
+});
+
 document.getElementById("showQuestionsBtn").addEventListener("click", async () => {
   const resultDiv = document.getElementById("result");
   resultDiv.style.display = "block";

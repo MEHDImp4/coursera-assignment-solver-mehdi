@@ -1,15 +1,25 @@
 let capturedUserId = null;
 let capturedCourseId = null;
 let capturedAuthToken = null;
+let capturedCourseMaterials = null;
 
 // Listen for messages from the natively injected intercept script
 window.addEventListener("message", (event) => {
+
     // We only accept messages from ourselves
     if (event.source !== window || !event.data || event.data.source !== "auto-coursera-interceptor") {
         return;
     }
 
     const { url, contentType, response, request } = event.data;
+
+    // Capture the course materials directly from the intercepted response!
+    if (request && request.url && request.url.includes("onDemandCourseMaterials.v2")) {
+        if (response && response.linked && response.linked['onDemandCourseMaterialItems.v2']) {
+            capturedCourseMaterials = response;
+            console.log("Captured Course Materials natively via Interceptor!");
+        }
+    }
 
     if (response && response.context && response.context.dispatcher) {
         try {
@@ -86,6 +96,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const aiAnswers = request.data;
         console.log("AI Answers received in content.js:", aiAnswers);
         applyAnswersToDOM(aiAnswers);
+    }
+    if (request.action === "getGradedAssignments") {
+        if (!capturedCourseId) {
+            const matchUrl = window.location.pathname.match(/\/learn\/([^/]+)/);
+            if (matchUrl) {
+                capturedCourseId = matchUrl[1];
+            }
+        }
+        if (!capturedCourseMaterials) {
+            sendResponse({ error: "Missing course materials! Please refresh the page so the extension can intercept the course data." });
+            return true;
+        }
+
+        try {
+            const results = [];
+            const items = capturedCourseMaterials.linked['onDemandCourseMaterialItems.v2'] || [];
+            const passableLessonElements = capturedCourseMaterials.linked['onDemandCourseMaterialPassableLessonElements.v1'] || [];
+
+            // Find graded item IDs
+            const gradedIds = new Set();
+            passableLessonElements.forEach(element => {
+                const parts = element.id.split('~'); // e.g. "item~q8mZW"
+                if (parts.length > 1) {
+                    gradedIds.add(parts[1]);
+                } else {
+                    gradedIds.add(element.id); // fallback
+                }
+            });
+
+            // Fallback for assignments if `onDemandCourseMaterialPassableLessonElements.v1` is missing
+            const fallbackGradedTypes = ['gradedProgramming', 'staffGraded', 'peer'];
+
+            items.forEach(item => {
+                const exactType = (item.contentSummary && item.contentSummary.typeName) ? item.contentSummary.typeName : (item.itemClass || 'unknown');
+                const isExplicitlyGraded = gradedIds.has(item.id);
+                const isFallbackGraded = fallbackGradedTypes.includes(exactType);
+
+                // Usually an assignment is passing if it's graded or fits the types
+                if (isExplicitlyGraded || isFallbackGraded) {
+                    let urlPath = "assignment-submission";
+                    if (exactType === "exam") urlPath = "exam";
+                    else if (exactType === "quiz") urlPath = "quiz";
+                    else if (exactType === "peer") urlPath = "peer";
+                    else if (exactType === "programming") urlPath = "programming";
+
+                    const link = `https://www.coursera.org/learn/${capturedCourseId || 'course'}/${urlPath}/${item.id}/${item.slug}`;
+                    results.push({
+                        name: item.name,
+                        link: link,
+                        type: exactType
+                    });
+                }
+            });
+
+            sendResponse({ data: results });
+        } catch (e) {
+            sendResponse({ error: "Failed to parse assignments: " + e.message });
+        }
+        return true;
     }
     if (request.action === "completeVideos") {
         if (!capturedCourseId) {
