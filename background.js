@@ -1,98 +1,196 @@
+importScripts("ai-providers.js");
+
+const {
+  ANSWER_SCHEMA,
+  DIALOGUE_SCHEMA,
+  PROVIDERS,
+  buildGenerationRequest,
+  buildVerificationRequest,
+  createDialoguePrompt,
+  createQuizPrompt,
+  extractResponseText,
+  parseAndValidateAnswers,
+  parseAndValidateDialogueReply,
+  providerErrorMessage,
+  shouldRetryWithoutSchema
+} = globalThis.AIProviderKit;
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "fetchAIExplanation") {
-    // // Call our async function to get the AI response
     getAIResponse(request.text)
-      .then((explanation) => sendResponse({ result: explanation }))
-      .catch((error) => sendResponse({ error: "Failed to fetch from AI." }));
-    // Return true to tell Chrome we will send the response asynchronously
+      .then((answers) => sendResponse({ result: answers }))
+      .catch((error) => sendResponse({ error: error.message || "Failed to fetch from AI." }));
+    return true;
+  }
+
+  if (request.action === "fetchDialogueAnswer") {
+    getDialogueResponse(request.messages, request.currentQuestion)
+      .then((reply) => sendResponse({ result: reply }))
+      .catch((error) => sendResponse({ error: error.message || "Failed to draft the dialogue answer." }));
+    return true;
+  }
+
+  if (request.action === "verifyAIProvider") {
+    verifyAIProvider(request.provider, request.apiKey, request.model)
+      .then((message) => sendResponse({ ok: true, message }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || "Connection check failed." }));
     return true;
   }
 });
-async function getAIResponse(questionsArray) {
-  const storageData = await chrome.storage.local.get(["userApiKey"]);
-  const API_KEY = storageData.userApiKey;
 
-  if (!API_KEY) {
-    console.error("Error: Please save your API key in the extension first!");
-    return null;
+async function loadAIConfiguration() {
+  const stored = await chrome.storage.local.get([
+    "aiProvider",
+    "aiProviderSettings",
+    "userApiKey"
+  ]);
+
+  const settings = stored.aiProviderSettings && typeof stored.aiProviderSettings === "object"
+    ? { ...stored.aiProviderSettings }
+    : {};
+
+  let migrated = false;
+  if (stored.userApiKey && !settings.gemini?.apiKey) {
+    settings.gemini = {
+      apiKey: stored.userApiKey,
+      model: PROVIDERS.gemini.defaultModel
+    };
+    migrated = true;
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`;
+  const providerId = PROVIDERS[stored.aiProvider] ? stored.aiProvider : "gemini";
+  const providerSettings = settings[providerId] || {};
+  const configuration = {
+    providerId,
+    apiKey: providerSettings.apiKey || "",
+    model: providerSettings.model || PROVIDERS[providerId].defaultModel
+  };
 
-  // Stringify the incoming questions array so the AI can read it
-  const questionsJsonString = JSON.stringify(questionsArray, null, 2);
-
-  // The strict prompt engineered for JSON output, now with text_input rules
-  const prompt = `
-You are an expert subject matter assistant. I am providing you with a JSON array of quiz questions. 
-Your task is to determine the correct answer(s) for each question based on the provided options or generate a short answer if it requires text input.
-
-INPUT FORMAT:
-${questionsJsonString}
-
-OUTPUT RULES (STRICTLY ENFORCED):
-1. You must respond ONLY with a valid JSON array. Do not include any introductory text, explanations, or markdown code blocks (do not use \`\`\`json).
-2. The output must be an array of objects.
-3. Each object must have exactly two keys: "questionNumber" (integer) and "correctOptions" (array of strings).
-4. For "single_answer" and "multiple_answer" types: The strings inside "correctOptions" MUST be exact, copy-pasted matches of the correct strings from the input "options" array.
-5. For "text_input" types: Generate a concise, highly accurate, and direct answer to the question. Place this generated text as a single string inside the "correctOptions" array.
-6. For "essay" types: Generate a well-thought-out, comprehensive essay response (e.g. 3-4 sentences, or fulfilling the constraints of the prompt) as requested. Place this as a single string inside the "correctOptions" array.
-
-OUTPUT FORMAT EXAMPLE:
-[
-  {
-    "questionNumber": 1,
-    "correctOptions": ["Exact text of the correct option here"]
-  },
-  {
-    "questionNumber": 2,
-    "correctOptions": ["This is a generated concise answer for a text input question"]
+  if (migrated) {
+    await chrome.storage.local.set({ aiProviderSettings: settings, aiProvider: providerId });
   }
-]
 
-Now, evaluate the input and provide the raw JSON output.
-`;
+  return configuration;
+}
 
+async function getAIResponse(questions) {
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error("No quiz questions were provided to the AI service.");
+  }
+
+  const { providerId, apiKey, model } = await loadAIConfiguration();
+  if (!apiKey) {
+    throw new Error(`Add and verify a ${PROVIDERS[providerId].label} API key in the extension popup.`);
+  }
+
+  const prompt = createQuizPrompt(questions);
+  const rawText = await callProvider(providerId, apiKey, model, prompt, ANSWER_SCHEMA, "quiz_answers");
+  return parseAndValidateAnswers(rawText, questions);
+}
+
+async function getDialogueResponse(messages, currentQuestion) {
+  if (!currentQuestion || !String(currentQuestion).trim()) {
+    throw new Error("No active Coursera dialogue question was found.");
+  }
+
+  const { providerId, apiKey, model } = await loadAIConfiguration();
+  if (!apiKey) {
+    throw new Error(`Add and verify a ${PROVIDERS[providerId].label} API key in the extension popup.`);
+  }
+
+  const prompt = createDialoguePrompt(messages, currentQuestion);
+  const rawText = await callProvider(providerId, apiKey, model, prompt, DIALOGUE_SCHEMA, "dialogue_reply");
+  return parseAndValidateDialogueReply(rawText);
+}
+
+async function callProvider(providerId, apiKey, model, prompt, responseSchema, schemaName) {
+  const provider = PROVIDERS[providerId];
+  const structured = provider.supportsStrictSchema;
+  let result = await requestJSON(buildGenerationRequest(
+    providerId,
+    apiKey,
+    model,
+    prompt,
+    structured,
+    responseSchema,
+    schemaName
+  ));
+
+  if (!result.response.ok && structured && shouldRetryWithoutSchema(providerId, result.response.status, result.data)) {
+    result = await requestJSON(buildGenerationRequest(
+      providerId,
+      apiKey,
+      model,
+      prompt,
+      false,
+      responseSchema,
+      schemaName
+    ));
+  }
+
+  if (!result.response.ok) {
+    throw new Error(providerErrorMessage(providerId, result.response.status, result.data));
+  }
+
+  const rawText = extractResponseText(providerId, result.data);
+  if (!rawText) {
+    throw new Error(`${provider.label} returned an empty or unsupported response.`);
+  }
+  return rawText;
+}
+
+async function verifyAIProvider(providerId, apiKey, model) {
+  if (!PROVIDERS[providerId]) throw new Error("Choose a supported AI provider.");
+  if (!apiKey || !String(apiKey).trim()) throw new Error("Enter an API key first.");
+  if (!model || !String(model).trim()) throw new Error("Choose or enter a model first.");
+
+  const spec = buildVerificationRequest(providerId, String(apiKey).trim(), String(model).trim());
+  const result = await requestJSON(spec);
+
+  if (!result.response.ok) {
+    throw new Error(providerErrorMessage(providerId, result.response.status, result.data));
+  }
+
+  if (spec.expectedModel) {
+    const availableModels = Array.isArray(result.data?.data) ? result.data.data : [];
+    if (!availableModels.some((item) => item.id === spec.expectedModel)) {
+      throw new Error(`The selected ${PROVIDERS[providerId].label} model is unavailable for this account.`);
+    }
+  }
+
+  return `${PROVIDERS[providerId].label} is connected.`;
+}
+
+async function requestJSON(spec) {
+  let response;
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "x-goog-api-key": API_KEY
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        // Setting a low temperature makes the AI more deterministic and less "creative" with formatting
-        generationConfig: {
-          temperature: 0.1,
-        },
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("Gemini API HTTP Error:", data);
-      throw new Error((data.error && data.error.message) ? data.error.message : `HTTP Error ${response.status}`);
-    }
-
-    if (!data.candidates || !data.candidates[0]) {
-      console.error("Gemini API missing candidates. Raw response:", data);
-      throw new Error("Invalid response structure from Gemini API");
-    }
-
-    const rawText = data.candidates[0].content.parts[0].text;
-
-    // Safety check: Strip out markdown code block syntax if the AI included it anyway
-    const cleanedText = rawText
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
-
-    // Parse the string into a real JavaScript Array and return it
-    return JSON.parse(cleanedText);
-  } catch (error) {
-    console.error("API or Parsing Error:", error);
-    throw error; // Rethrow to be caught in the caller
+    response = await fetch(spec.url, spec.options);
+  } catch {
+    const provider = Object.keys(PROVIDERS).find((id) => spec.url.includes(providerHostFragment(id)));
+    const label = provider ? PROVIDERS[provider].label : "AI provider";
+    throw new Error(`Could not reach ${label}. Check your connection and try again.`);
   }
+
+  const rawBody = await response.text();
+  let data = {};
+  if (rawBody) {
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      data = { message: rawBody.slice(0, 300) };
+    }
+  }
+  return { response, data };
+}
+
+function providerHostFragment(providerId) {
+  return {
+    gemini: "generativelanguage.googleapis.com",
+    openai: "api.openai.com",
+    anthropic: "api.anthropic.com",
+    xai: "api.x.ai",
+    deepseek: "api.deepseek.com",
+    groq: "api.groq.com",
+    openrouter: "openrouter.ai"
+  }[providerId];
 }

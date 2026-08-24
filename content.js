@@ -1,7 +1,40 @@
 let capturedUserId = null;
 let capturedCourseId = null;
 let capturedAuthToken = null;
+let capturedRequestHeaders = {};
 let capturedCourseMaterials = null;
+let latestCodeQuestionBindings = new Map();
+let monacoRequestSequence = 0;
+
+const capturedHeaderNames = new Set([
+    "x-csrf2-cookie",
+    "x-csrf2-token",
+    "x-csrf3-token",
+    "x-csrftoken",
+    "x-requested-with"
+]);
+
+function normalizeInterceptedHeaders(headers) {
+    if (Array.isArray(headers)) {
+        return headers.filter((header) => Array.isArray(header) && header.length >= 2);
+    }
+    if (headers && typeof headers === "object") {
+        return Object.entries(headers);
+    }
+    return [];
+}
+
+function captureRequestHeaders(headers) {
+    normalizeInterceptedHeaders(headers).forEach(([name, value]) => {
+        const normalizedName = String(name).toLowerCase();
+        if (!capturedHeaderNames.has(normalizedName) || value == null) return;
+
+        capturedRequestHeaders[normalizedName] = String(value);
+        if (normalizedName === "x-csrf3-token") {
+            capturedAuthToken = String(value);
+        }
+    });
+}
 
 // Listen for messages from the natively injected intercept script
 window.addEventListener("message", (event) => {
@@ -35,12 +68,8 @@ window.addEventListener("message", (event) => {
         }
     }
 
-    if (request && request.headers && request.headers.length > 0) {
-        request.headers.forEach(header => {
-            if (header[0].toLowerCase() === 'x-csrf3-token') {
-                capturedAuthToken = header[1];
-            }
-        });
+    if (request?.headers) {
+        captureRequestHeaders(request.headers);
     }
 
     if (request && request.url && (request.url.includes("api/onDemandCourses.v1") || request.url.includes("slug="))) {
@@ -53,107 +82,34 @@ window.addEventListener("message", (event) => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "fillDialogueAnswer") {
+        fillCurrentDialogueAnswer()
+            .then(() => sendResponse({ status: "filled" }))
+            .catch((error) => sendResponse({ error: error.message || "Could not fill the dialogue answer." }));
+        return true;
+    }
+
     if (request.action === "solveQuizDirectly") {
         sendResponse({ status: "started" });
-        showOrUpdateBanner("Extracting questions and contacting AI... 🤖", "info");
-
-        const arrayQuestions = scrapeAssessment();
-
-        if (!arrayQuestions || arrayQuestions.length === 0) {
-            showOrUpdateBanner("No questions found on this page! Are you on a quiz?", "error");
-            setTimeout(hideBanner, 4000);
-            return;
-        }
-
-        console.log("Sending to AI background script...", arrayQuestions);
-
-        // Content script bypasses popup and talks directly to the stable background script
-        chrome.runtime.sendMessage(
-            { action: "fetchAIExplanation", text: arrayQuestions },
-            (aiResponse) => {
-                if (aiResponse && aiResponse.error) {
-                    showOrUpdateBanner("Error: " + aiResponse.error, "error");
-                    setTimeout(hideBanner, 5000);
-                } else if (aiResponse && aiResponse.result) {
-                    applyAnswersToDOM(aiResponse.result);
-                    showOrUpdateBanner("Answers applied successfully! ✅", "success");
-                    setTimeout(hideBanner, 4000);
-                } else {
-                    showOrUpdateBanner("An unknown error occurred.", "error");
-                    setTimeout(hideBanner, 4000);
-                }
-            }
-        );
+        solveCurrentAssessment();
+        return true;
     }
     if (request.action === "getSelection") {
-        const arrayQuestions = scrapeAssessment();
-        console.log(arrayQuestions);
-
-        // Send it back to the popup
-        sendResponse({ data: arrayQuestions });
+        scrapeAssessmentDetailed()
+            .then(({ questions, issues }) => sendResponse({ data: questions, issues }))
+            .catch((error) => sendResponse({ error: error.message || "Could not extract this assessment." }));
+        return true;
     }
     if (request.action === "applyAIResponse") {
-        const aiAnswers = request.data;
-        console.log("AI Answers received in content.js:", aiAnswers);
-        applyAnswersToDOM(aiAnswers);
+        applyAnswersToDOM(request.data)
+            .then((summary) => sendResponse({ data: summary }))
+            .catch((error) => sendResponse({ error: error.message || "Could not apply the AI answers." }));
+        return true;
     }
-    if (request.action === "getGradedAssignments") {
-        if (!capturedCourseId) {
-            const matchUrl = window.location.pathname.match(/\/learn\/([^/]+)/);
-            if (matchUrl) {
-                capturedCourseId = matchUrl[1];
-            }
-        }
-        if (!capturedCourseMaterials) {
-            sendResponse({ error: "Missing course materials! Please refresh the page so the extension can intercept the course data." });
-            return true;
-        }
-
-        try {
-            const results = [];
-            const items = capturedCourseMaterials.linked['onDemandCourseMaterialItems.v2'] || [];
-            const passableLessonElements = capturedCourseMaterials.linked['onDemandCourseMaterialPassableLessonElements.v1'] || [];
-
-            // Find graded item IDs
-            const gradedIds = new Set();
-            passableLessonElements.forEach(element => {
-                const parts = element.id.split('~'); // e.g. "item~q8mZW"
-                if (parts.length > 1) {
-                    gradedIds.add(parts[1]);
-                } else {
-                    gradedIds.add(element.id); // fallback
-                }
-            });
-
-            // Fallback for assignments if `onDemandCourseMaterialPassableLessonElements.v1` is missing
-            const fallbackGradedTypes = ['gradedProgramming', 'staffGraded', 'peer'];
-
-            items.forEach(item => {
-                const exactType = (item.contentSummary && item.contentSummary.typeName) ? item.contentSummary.typeName : (item.itemClass || 'unknown');
-                const isExplicitlyGraded = gradedIds.has(item.id);
-                const isFallbackGraded = fallbackGradedTypes.includes(exactType);
-
-                // Usually an assignment is passing if it's graded or fits the types
-                if (isExplicitlyGraded || isFallbackGraded) {
-                    let urlPath = "assignment-submission";
-                    if (exactType === "exam") urlPath = "exam";
-                    else if (exactType === "quiz") urlPath = "quiz";
-                    else if (exactType === "peer") urlPath = "peer";
-                    else if (exactType === "programming") urlPath = "programming";
-
-                    const link = `https://www.coursera.org/learn/${capturedCourseId || 'course'}/${urlPath}/${item.id}/${item.slug}`;
-                    results.push({
-                        name: item.name,
-                        link: link,
-                        type: exactType
-                    });
-                }
-            });
-
-            sendResponse({ data: results });
-        } catch (e) {
-            sendResponse({ error: "Failed to parse assignments: " + e.message });
-        }
+    if (request.action === "getCourseRequirements" || request.action === "getGradedAssignments") {
+        getCourseRequirements()
+            .then((result) => sendResponse({ data: result }))
+            .catch((error) => sendResponse({ error: error.message || "Could not load course requirements." }));
         return true;
     }
     if (request.action === "completeVideos") {
@@ -180,137 +136,628 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Return true to indicate we will send a response asynchronously
     return true;
 });
-function scrapeAssessment() {
-    const scrapedAssessment = [];
 
-    // Select all the main container blocks for the questions
-    const questionBlocks = document.querySelectorAll('.css-1erl2aq, .css-12u8wr5, [data-testid="part-Submission_RichTextQuestion"]');
-    console.log(questionBlocks);
+function getCurrentCourseSlug() {
+    const match = window.location.pathname.match(/\/learn\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+}
 
-    questionBlocks.forEach((block, index) => {
-        // 1. Extract the Question Text
-        // Practice quizzes use id^="prompt-autoGradableResponseId", Graded quizzes use id^="prompt-"
-        const promptNode = block.querySelector('[id^="prompt-"] [data-testid="cml-viewer"]');
+async function loadCourseMaterials() {
+    if (capturedCourseMaterials?.linked?.['onDemandCourseMaterialItems.v2']) {
+        return capturedCourseMaterials;
+    }
 
-        // Skip if it doesn't match our expected structure
-        if (!promptNode) return;
+    const courseSlug = getCurrentCourseSlug();
+    if (!courseSlug) {
+        throw new Error("Open a Coursera course page first.");
+    }
 
-        const questionText = promptNode.innerText.trim();
+    const apiUrl = new URL("https://www.coursera.org/api/onDemandCourseMaterials.v2/");
+    apiUrl.searchParams.set("q", "slug");
+    apiUrl.searchParams.set("slug", courseSlug);
+    apiUrl.searchParams.set(
+        "includes",
+        "modules,lessons,passableItemGroups,passableItemGroupChoices,passableLessonElements,items"
+    );
+    apiUrl.searchParams.set(
+        "fields",
+        [
+            "moduleIds",
+            "onDemandCourseMaterialModules.v1(name,slug,lessonIds,optional)",
+            "onDemandCourseMaterialLessons.v1(name,slug,itemIds,elementIds,optional)",
+            "onDemandCourseMaterialPassableItemGroups.v1(requiredPassedCount,passableItemGroupChoiceIds,trackId)",
+            "onDemandCourseMaterialPassableItemGroupChoices.v1(name,description,itemIds)",
+            "onDemandCourseMaterialPassableLessonElements.v1(gradingWeight,isRequiredForPassing)",
+            "onDemandCourseMaterialItems.v2(name,slug,timeCommitment,contentSummary,isLocked,lockedStatus,itemLockedReasonCode,itemLockSummary)"
+        ].join(",")
+    );
+    apiUrl.searchParams.set("showLockedItems", "true");
 
-        // 2. Extract the Options and Question Type
-        const options = [];
-        let questionType = 'unknown';
+    const response = await fetch(apiUrl.href, { credentials: "include" });
+    if (response.status === 401 || response.status === 403) {
+        throw new Error("Coursera could not authorize the course request. Sign in, then try again.");
+    }
+    if (!response.ok) {
+        throw new Error(`Coursera course materials request failed with HTTP ${response.status}.`);
+    }
 
-        // Find all option wrappers within this specific question block
-        const optionNodes = block.querySelectorAll('.rc-Option');
+    const materials = await response.json();
+    if (!materials?.linked?.['onDemandCourseMaterialItems.v2']) {
+        throw new Error("Coursera returned course materials in an unsupported format.");
+    }
 
-        // Check if it has multiple choice/checkbox options
-        if (optionNodes.length > 0) {
-            optionNodes.forEach(opt => {
-                const textNode = opt.querySelector('[data-testid="cml-viewer"]');
-                const inputNode = opt.querySelector('input');
+    capturedCourseMaterials = materials;
+    capturedCourseId = courseSlug;
+    return materials;
+}
 
-                if (textNode && inputNode) {
-                    // Push the clean text of the option
-                    options.push(textNode.innerText.trim());
+function linkedCourseCollection(materials, key) {
+    const collection = materials?.linked?.[key];
+    return Array.isArray(collection) ? collection : [];
+}
 
-                    // Determine the question type based on the input attribute
-                    if (questionType === 'unknown') {
-                        questionType = inputNode.type === 'radio' ? 'single_answer' : 'multiple_answer';
-                    }
-                }
+function requirementRoute(type) {
+    return {
+        exam: "exam",
+        quiz: "quiz",
+        staffGraded: "assignment-submission",
+        ungradedAssignment: "assignment-submission",
+        peer: "peer",
+        phasedPeer: "peer",
+        programming: "programming",
+        gradedProgramming: "programming"
+    }[type] || "";
+}
+
+function courseItemType(item) {
+    return item?.contentSummary?.typeName || item?.itemClass || "unknown";
+}
+
+function courseItemIsLocked(item) {
+    if (item?.isLocked === true) return true;
+    const status = String(item?.lockedStatus || "").trim().toLowerCase();
+    if (!status || ["unlocked", "not_locked", "available"].includes(status)) return false;
+    return status === "locked" || status.startsWith("locked_") || status.startsWith("hard_locked");
+}
+
+function itemIdFromPassable(passableId) {
+    const parts = String(passableId || "").split("~").filter(Boolean);
+    return parts.at(-1) || "";
+}
+
+function normalizeCourseRequirements(materials, courseSlug) {
+    const items = linkedCourseCollection(materials, 'onDemandCourseMaterialItems.v2');
+    const modules = linkedCourseCollection(materials, 'onDemandCourseMaterialModules.v1');
+    const lessons = linkedCourseCollection(materials, 'onDemandCourseMaterialLessons.v1');
+    const passables = linkedCourseCollection(materials, 'onDemandCourseMaterialPassableLessonElements.v1');
+    const passableGroups = linkedCourseCollection(materials, 'onDemandCourseMaterialPassableItemGroups.v1');
+    const passableChoices = linkedCourseCollection(materials, 'onDemandCourseMaterialPassableItemGroupChoices.v1');
+
+    const itemById = new Map(items.map((item) => [item.id, item]));
+    const moduleById = new Map(modules.map((module) => [module.id, module]));
+    const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+    const choiceById = new Map(passableChoices.map((choice) => [choice.id, choice]));
+
+    const rootModuleIds = Array.isArray(materials?.elements?.[0]?.moduleIds)
+        ? materials.elements[0].moduleIds
+        : modules.map((module) => module.id);
+    const moduleOrder = new Map(rootModuleIds.map((id, index) => [id, index]));
+    const lessonOrder = new Map();
+    modules.forEach((module) => {
+        (module.lessonIds || []).forEach((lessonId, index) => {
+            lessonOrder.set(lessonId, index);
+        });
+    });
+    const itemOrder = new Map();
+    lessons.forEach((lesson) => {
+        const lessonItems = lesson.itemIds || lesson.elementIds || [];
+        lessonItems.forEach((itemId, index) => itemOrder.set(itemIdFromPassable(itemId), index));
+    });
+
+    const passableByItemId = new Map();
+    passables.forEach((passable) => {
+        const itemId = itemIdFromPassable(passable.id);
+        if (itemId) passableByItemId.set(itemId, passable);
+    });
+
+    const groupByItemId = new Map();
+    passableGroups.forEach((group) => {
+        const choiceIds = Array.isArray(group.passableItemGroupChoiceIds)
+            ? group.passableItemGroupChoiceIds
+            : [];
+        choiceIds.forEach((choiceId) => {
+            const choice = choiceById.get(choiceId);
+            (choice?.itemIds || []).forEach((rawItemId) => {
+                const itemId = itemIdFromPassable(rawItemId);
+                if (!itemId) return;
+                groupByItemId.set(itemId, {
+                    name: choice.name || "Assignment choice",
+                    requiredPassedCount: Number(group.requiredPassedCount) || 0,
+                    choiceCount: choiceIds.length
+                });
             });
-        } else {
-            // 3. Fallback for Text Input Questions
-            // Look for a standard text input, an input with no type defined, or a textarea/slate-editor
-            const standardInput = block.querySelector('input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea');
-            const slateEditor = block.querySelector('[data-slate-editor="true"]');
-
-            if (slateEditor) {
-                questionType = 'essay';
-            } else if (standardInput) {
-                questionType = 'text_input';
-            }
-        }
-
-        // 4. Construct the object and add it to our main array
-        scrapedAssessment.push({
-            questionNumber: index + 1,
-            type: questionType,
-            question: questionText,
-            options: options
         });
     });
 
-    return scrapedAssessment;
+    const hasConfirmedMetadata = passableByItemId.size > 0 || groupByItemId.size > 0;
+    const fallbackTypes = new Set(["exam", "quiz", "staffGraded", "gradedProgramming", "peer", "phasedPeer"]);
+    const candidateIds = hasConfirmedMetadata
+        ? new Set([...passableByItemId.keys(), ...groupByItemId.keys()])
+        : new Set(items.filter((item) => fallbackTypes.has(courseItemType(item))).map((item) => item.id));
+
+    const requirements = [];
+    candidateIds.forEach((itemId) => {
+        const item = itemById.get(itemId);
+        if (!item) return;
+
+        const passable = passableByItemId.get(itemId);
+        const group = groupByItemId.get(itemId) || null;
+        const module = moduleById.get(item.moduleId);
+        const lesson = lessonById.get(item.lessonId);
+        const type = courseItemType(item);
+        const route = requirementRoute(type);
+        const gradingWeight = Number(passable?.gradingWeight);
+        const hasGradingWeight = Number.isFinite(gradingWeight) && gradingWeight > 0;
+        const safeItemSlug = item.slug ? encodeURIComponent(item.slug) : "";
+        const link = route && safeItemSlug
+            ? `https://www.coursera.org/learn/${encodeURIComponent(courseSlug)}/${route}/${encodeURIComponent(item.id)}/${safeItemSlug}`
+            : null;
+
+        requirements.push({
+            id: item.id,
+            name: item.name || "Graded activity",
+            type,
+            moduleName: module?.name || "Other course work",
+            lessonName: lesson?.name || "",
+            gradingWeight: hasGradingWeight ? gradingWeight : null,
+            weightPercent: null,
+            requiredForPassing: passable?.isRequiredForPassing === true,
+            groupRequirement: group,
+            locked: courseItemIsLocked(item),
+            lockReason: item.itemLockSummary || item.itemLockedReasonCode || "",
+            timeCommitment: Number.isFinite(Number(item.timeCommitment)) ? Number(item.timeCommitment) : null,
+            source: passable || group ? "confirmed" : "detected",
+            link,
+            moduleOrder: moduleOrder.get(item.moduleId) ?? Number.MAX_SAFE_INTEGER,
+            lessonOrder: lessonOrder.get(item.lessonId) ?? Number.MAX_SAFE_INTEGER,
+            itemOrder: itemOrder.get(item.id) ?? Number.MAX_SAFE_INTEGER
+        });
+    });
+
+    requirements.sort((first, second) => (
+        first.moduleOrder - second.moduleOrder ||
+        first.lessonOrder - second.lessonOrder ||
+        first.itemOrder - second.itemOrder ||
+        first.name.localeCompare(second.name)
+    ));
+
+    const totalGradingWeight = requirements.reduce(
+        (total, requirement) => total + (requirement.gradingWeight || 0),
+        0
+    );
+    const unresolvedCount = Math.max(0, candidateIds.size - requirements.length);
+    if (totalGradingWeight > 0 && unresolvedCount === 0) {
+        requirements.forEach((requirement) => {
+            if (requirement.gradingWeight) {
+                requirement.weightPercent = Math.round(
+                    (requirement.gradingWeight / totalGradingWeight) * 1000
+                ) / 10;
+            }
+        });
+    }
+
+    requirements.forEach((requirement) => {
+        delete requirement.moduleOrder;
+        delete requirement.lessonOrder;
+        delete requirement.itemOrder;
+    });
+
+    return {
+        requirements,
+        summary: {
+            confirmed: hasConfirmedMetadata,
+            totalGradingWeight,
+            requiredCount: requirements.filter((requirement) => requirement.requiredForPassing).length,
+            lockedCount: requirements.filter((requirement) => requirement.locked).length,
+            unmappedCount: requirements.filter((requirement) => !requirement.link).length,
+            unresolvedCount
+        }
+    };
 }
-function applyAnswersToDOM(correctAnswers) {
-    // Select all the main container blocks for the questions
-    const questionBlocks = document.querySelectorAll('.css-1erl2aq, .css-12u8wr5, [data-testid="part-Submission_RichTextQuestion"]');
 
-    questionBlocks.forEach((block, index) => {
-        const currentQuestionNumber = index + 1;
+async function getCourseRequirements() {
+    const courseSlug = getCurrentCourseSlug();
+    if (!courseSlug) throw new Error("Open a Coursera course page first.");
+    const materials = await loadCourseMaterials();
+    return normalizeCourseRequirements(materials, courseSlug);
+}
 
-        // Find the matching answer data from our JSON for this specific question
-        const answerData = correctAnswers.find(q => q.questionNumber === currentQuestionNumber);
+function assessmentQuestionBlocks() {
+    const semanticBlocks = Array.from(document.querySelectorAll('[data-testid^="part-Submission_"]'))
+        .filter((block) => block.querySelector('[id^="prompt-"] [data-testid="cml-viewer"]'));
+    if (semanticBlocks.length > 0) return semanticBlocks;
+    return Array.from(document.querySelectorAll('.css-1erl2aq, .css-12u8wr5'));
+}
 
-        // If we don't have an answer for this question, or the array is empty, skip it
-        if (!answerData || !answerData.correctOptions || answerData.correctOptions.length === 0) return;
+function codeEditorDescriptor(block) {
+    const editorHosts = Array.from(block.querySelectorAll('.monaco-editor[data-uri]'));
+    const evaluator = block.querySelector('.cml-code-evaluator');
+    let editorHost = null;
 
-        // Check if there are option wrappers (multiple choice / checkbox)
-        const optionNodes = block.querySelectorAll('.rc-Option');
+    if (editorHosts.length === 1) {
+        editorHost = editorHosts[0];
+    } else if (evaluator && editorHosts.length > 1) {
+        const precedingEditors = editorHosts.filter((host) => (
+            host.compareDocumentPosition(evaluator) & Node.DOCUMENT_POSITION_FOLLOWING
+        ));
+        editorHost = precedingEditors.at(-1) || null;
+    }
 
+    if (!editorHost) throw new Error("Could not identify the editable Coursera code model.");
+    const modelUri = editorHost.getAttribute("data-uri") || "";
+    const language = editorHost.closest('[data-mode-id]')?.getAttribute("data-mode-id") || "unknown";
+    if (!modelUri.startsWith("inmemory://model/")) {
+        throw new Error("Coursera returned an unsupported code model URI.");
+    }
+    return { modelUri, language };
+}
+
+function requestMonacoBridge(action, payload = {}) {
+    return new Promise((resolve, reject) => {
+        const requestId = `monaco-${Date.now()}-${++monacoRequestSequence}`;
+        const timeoutId = setTimeout(() => {
+            window.removeEventListener("message", handleResponse);
+            reject(new Error("Coursera's code editor did not respond."));
+        }, 2600);
+
+        function handleResponse(event) {
+            if (
+                event.source !== window ||
+                event.data?.source !== "auto-coursera-monaco-response" ||
+                event.data?.requestId !== requestId
+            ) return;
+
+            clearTimeout(timeoutId);
+            window.removeEventListener("message", handleResponse);
+            if (event.data.ok) resolve(event.data);
+            else reject(new Error(event.data.error || "Coursera's code editor request failed."));
+        }
+
+        window.addEventListener("message", handleResponse);
+        window.postMessage({
+            source: "auto-coursera-monaco-request",
+            requestId,
+            action,
+            ...payload
+        }, "*");
+    });
+}
+
+async function scrapeAssessmentDetailed() {
+    const questions = [];
+    const issues = [];
+    const nextCodeBindings = new Map();
+    const questionBlocks = assessmentQuestionBlocks();
+
+    for (let index = 0; index < questionBlocks.length; index += 1) {
+        const block = questionBlocks[index];
+        const questionNumber = index + 1;
+        const promptNode = block.querySelector('[id^="prompt-"] [data-testid="cml-viewer"]');
+        if (!promptNode) continue;
+
+        const question = {
+            questionNumber,
+            type: "unknown",
+            question: promptNode.innerText.trim(),
+            options: []
+        };
+
+        if (block.dataset.testid === "part-Submission_CodeExpressionQuestion") {
+            try {
+                const descriptor = codeEditorDescriptor(block);
+                const modelResponse = await requestMonacoBridge("read-model", {
+                    modelUri: descriptor.modelUri
+                });
+                const currentCode = String(modelResponse.value ?? "");
+
+                question.type = "code_expression";
+                question.language = descriptor.language;
+                question.currentCode = currentCode;
+                nextCodeBindings.set(questionNumber, {
+                    modelUri: descriptor.modelUri,
+                    expectedValue: currentCode
+                });
+                questions.push(question);
+            } catch (error) {
+                issues.push({ questionNumber, error: error.message || "Could not read the code editor." });
+            }
+            continue;
+        }
+
+        const optionNodes = Array.from(block.querySelectorAll('.rc-Option'));
         if (optionNodes.length > 0) {
-            // --- HANDLE MULTIPLE CHOICE & CHECKBOXES ---
-            optionNodes.forEach(opt => {
-                const textNode = opt.querySelector('[data-testid="cml-viewer"]');
-                const inputNode = opt.querySelector('input');
-
-                if (textNode && inputNode) {
-                    const optionText = textNode.innerText.trim();
-                    const shouldBeSelected = answerData.correctOptions.includes(optionText);
-
-                    if (shouldBeSelected && !inputNode.checked) {
-                        // It's a correct answer but currently unchecked -> Click it
-                        inputNode.click();
-                    } else if (!shouldBeSelected && inputNode.checked && inputNode.type === 'checkbox') {
-                        // It's an incorrect answer but currently checked -> Unclick it
-                        inputNode.click();
-                    }
+            optionNodes.forEach((option) => {
+                const textNode = option.querySelector('[data-testid="cml-viewer"]');
+                const inputNode = option.querySelector('input[type="radio"], input[type="checkbox"]');
+                if (!textNode || !inputNode) return;
+                question.options.push(textNode.innerText.trim());
+                if (question.type === "unknown") {
+                    question.type = inputNode.type === "radio" ? "single_answer" : "multiple_answer";
                 }
             });
         } else {
-            // --- HANDLE TEXT INPUTS ---
-            // Look for a standard text input, an input with no type defined, or a textarea/slate-editor
-            const textInputNode = block.querySelector('input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea, [data-slate-editor="true"]');
-
-            if (textInputNode) {
-                // Grab the generated text string from our JSON
-                const textToType = answerData.correctOptions[0];
-
-                if (textInputNode.hasAttribute('contenteditable')) {
-                    // Handle Slate Editor / ContentEditable
-                    textInputNode.focus();
-
-                    // We must wait a tiny bit for the editor to focus properly before typing
-                    setTimeout(() => {
-                        // Select all placeholder text and replace it with our AI answer
-                        document.execCommand('selectAll', false, null);
-                        document.execCommand('insertText', false, textToType);
-                    }, 50);
-                } else {
-                    // 1. Set the raw value for standard inputs
-                    textInputNode.value = textToType;
-
-                    // 2. Dispatch events so the React application registers the state change
-                    textInputNode.dispatchEvent(new Event('input', { bubbles: true }));
-                    textInputNode.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            }
+            const slateEditor = block.querySelector('[data-slate-editor="true"]');
+            const standardInput = block.querySelector(
+                'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea)'
+            );
+            if (slateEditor) question.type = "essay";
+            else if (standardInput) question.type = "text_input";
         }
-    });
 
-    console.log("Answers applied successfully!");
+        questions.push(question);
+    }
+
+    latestCodeQuestionBindings = nextCodeBindings;
+    return { questions, issues };
+}
+
+function requestAIAssessmentAnswers(questions) {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+            { action: "fetchAIExplanation", text: questions },
+            (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                }
+                if (response?.error) {
+                    reject(new Error(response.error));
+                    return;
+                }
+                if (!Array.isArray(response?.result)) {
+                    reject(new Error("The AI provider returned an unsupported answer."));
+                    return;
+                }
+                resolve(response.result);
+            }
+        );
+    });
+}
+
+function cleanCodeAnswer(value) {
+    const code = String(value ?? "");
+    const fenced = code.match(/^\s*```(?:[a-z0-9_+-]+)?\s*\r?\n([\s\S]*?)\r?\n```\s*$/i);
+    return fenced ? fenced[1] : code;
+}
+
+async function applyAnswersToDOM(correctAnswers) {
+    const questionBlocks = assessmentQuestionBlocks();
+    const failures = [];
+    let appliedCount = 0;
+
+    for (let index = 0; index < questionBlocks.length; index += 1) {
+        const block = questionBlocks[index];
+        const questionNumber = index + 1;
+        const answerData = Array.isArray(correctAnswers)
+            ? correctAnswers.find((answer) => answer.questionNumber === questionNumber)
+            : null;
+        if (!answerData?.correctOptions?.length) continue;
+
+        if (block.dataset.testid === "part-Submission_CodeExpressionQuestion") {
+            const binding = latestCodeQuestionBindings.get(questionNumber);
+            if (!binding) {
+                failures.push({ questionNumber, error: "Code editor binding unavailable." });
+                continue;
+            }
+            try {
+                const replacement = cleanCodeAnswer(answerData.correctOptions[0]);
+                if (!replacement.trim()) throw new Error("The AI returned empty code.");
+                await requestMonacoBridge("replace-model", {
+                    modelUri: binding.modelUri,
+                    expectedValue: binding.expectedValue,
+                    value: replacement
+                });
+                appliedCount += 1;
+            } catch (error) {
+                failures.push({ questionNumber, error: error.message || "Could not update the code editor." });
+            }
+            continue;
+        }
+
+        const optionNodes = Array.from(block.querySelectorAll('.rc-Option'));
+        if (optionNodes.length > 0) {
+            const availableAnswers = new Set();
+            optionNodes.forEach((option) => {
+                const textNode = option.querySelector('[data-testid="cml-viewer"]');
+                const inputNode = option.querySelector('input[type="radio"], input[type="checkbox"]');
+                if (!textNode || !inputNode) return;
+                const optionText = textNode.innerText.trim();
+                availableAnswers.add(optionText);
+                const shouldBeSelected = answerData.correctOptions.includes(optionText);
+                if (shouldBeSelected && !inputNode.checked) inputNode.click();
+                else if (!shouldBeSelected && inputNode.checked && inputNode.type === "checkbox") inputNode.click();
+            });
+
+            if (answerData.correctOptions.every((answer) => availableAnswers.has(answer))) {
+                appliedCount += 1;
+            } else {
+                failures.push({ questionNumber, error: "The selected option no longer matches the page." });
+            }
+            continue;
+        }
+
+        const textInputNode = block.querySelector(
+            'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea), [data-slate-editor="true"]'
+        );
+        if (!textInputNode) {
+            failures.push({ questionNumber, error: "No supported answer field was found." });
+            continue;
+        }
+
+        const textToType = answerData.correctOptions[0];
+        if (textInputNode.hasAttribute('contenteditable')) {
+            textInputNode.focus();
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, textToType);
+        } else {
+            textInputNode.value = textToType;
+            textInputNode.dispatchEvent(new Event('input', { bubbles: true }));
+            textInputNode.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        appliedCount += 1;
+    }
+
+    return { appliedCount, failures };
+}
+
+async function solveCurrentAssessment() {
+    showOrUpdateBanner("Extracting questions and contacting AI... 🤖", "info");
+    try {
+        const { questions, issues } = await scrapeAssessmentDetailed();
+        if (questions.length === 0) {
+            throw new Error("No supported questions were found on this page.");
+        }
+
+        const answers = await requestAIAssessmentAnswers(questions);
+        const summary = await applyAnswersToDOM(answers);
+        const failures = [...issues, ...summary.failures];
+
+        if (failures.length === 0) {
+            showOrUpdateBanner("Answers and code added successfully! ✅", "success");
+            setTimeout(hideBanner, 4000);
+            return;
+        }
+
+        const failedNumbers = [...new Set(failures.map((failure) => failure.questionNumber))]
+            .sort((first, second) => first - second)
+            .join(", ");
+        showOrUpdateBanner(
+            `Applied ${summary.appliedCount} answer${summary.appliedCount === 1 ? "" : "s"}. Check question${failedNumbers.includes(",") ? "s" : ""} ${failedNumbers}.`,
+            "info"
+        );
+        setTimeout(hideBanner, 6500);
+    } catch (error) {
+        showOrUpdateBanner(`Error: ${error.message || "Could not solve this assessment."}`, "error");
+        setTimeout(hideBanner, 5500);
+    }
+}
+
+function extractDialogueState() {
+    const root = document.querySelector('[data-testid="coursera-coach-item"], #coursera-coach-item');
+    if (!root) {
+        throw new Error("No Coursera dialogue was found on this page.");
+    }
+
+    const composer = root.querySelector(
+        'textarea[aria-label="Send a message"]:not([aria-hidden="true"]):not([readonly])'
+    );
+    if (!composer || composer.disabled || composer.closest('[aria-disabled="true"]')) {
+        throw new Error("Start the Coursera dialogue and wait for its question first.");
+    }
+
+    const coachMessageNodes = Array.from(root.querySelectorAll(
+        '[data-testid="chat-message-llm"] [data-testid="coach-message-markdown"]'
+    ));
+    const currentQuestion = coachMessageNodes
+        .map((node) => node.innerText.trim())
+        .filter(Boolean)
+        .at(-1);
+
+    if (!currentQuestion) {
+        throw new Error("No active Coursera dialogue question was found.");
+    }
+
+    const seenMessages = new Set();
+    const messages = Array.from(root.querySelectorAll('[role="list"] > [role="listitem"]'))
+        .map((item) => {
+            const coachContent = item.querySelector(
+                '[data-testid="chat-message-llm"] [data-testid="coach-message-markdown"]'
+            );
+            const role = coachContent ? "coach" : "learner";
+            const text = coachContent ? coachContent.innerText.trim() : dialogueMessageText(item);
+            return { role, text };
+        })
+        .filter((message) => {
+            if (!message.text) return false;
+            const fingerprint = `${message.role}:${message.text}`;
+            if (seenMessages.has(fingerprint)) return false;
+            seenMessages.add(fingerprint);
+            return true;
+        });
+
+    return { composer, currentQuestion, messages };
+}
+
+function dialogueMessageText(item) {
+    const copy = item.cloneNode(true);
+    copy.querySelectorAll('button, [role="toolbar"], [role="status"], [aria-live]')
+        .forEach((node) => node.remove());
+    return copy.innerText.trim();
+}
+
+function requestDialogueAnswer(messages, currentQuestion) {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+            { action: "fetchDialogueAnswer", messages, currentQuestion },
+            (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                }
+                if (response?.error) {
+                    reject(new Error(response.error));
+                    return;
+                }
+                if (!response?.result) {
+                    reject(new Error("The AI provider did not return a dialogue answer."));
+                    return;
+                }
+                resolve(response.result);
+            }
+        );
+    });
+}
+
+function fillReactTextarea(textarea, value) {
+    const valueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value"
+    )?.set;
+
+    if (valueSetter) {
+        valueSetter.call(textarea, value);
+    } else {
+        textarea.value = value;
+    }
+
+    textarea.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: value
+    }));
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+    textarea.focus();
+    textarea.setSelectionRange(value.length, value.length);
+}
+
+async function fillCurrentDialogueAnswer() {
+    const initialState = extractDialogueState();
+    if (initialState.composer.value.trim()) {
+        throw new Error("The dialogue message box already contains text. Clear it before generating an answer.");
+    }
+
+    const reply = await requestDialogueAnswer(initialState.messages, initialState.currentQuestion);
+    const currentState = extractDialogueState();
+
+    if (currentState.currentQuestion !== initialState.currentQuestion) {
+        throw new Error("The Coursera dialogue changed while the answer was being generated. Try again.");
+    }
+    if (currentState.composer.value.trim()) {
+        throw new Error("The dialogue message box changed while the answer was being generated.");
+    }
+
+    fillReactTextarea(currentState.composer, reply);
 }
 
 // Helper UI Functions for the Banner
