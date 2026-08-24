@@ -46,7 +46,46 @@ A sleek, lightweight Chrome Extension to automate and help you navigate your Cou
 5. Open a Coursera quiz and click **Solve Current Quiz**. The selected provider is used until you explicitly choose and verify another one.
 6. On a Coursera Coach dialogue, click **Fill Dialogue Answer** to place a draft in the message box. The extension never clicks **Send** for you.
 
-**Course Requirements** uses Coursera's course-material structure to identify confirmed passable activities and grading weights. It does not include your completion status, current grade, or guarantee that completing every listed activity will satisfy the course's passing threshold.
+## 🎯 Course Requirements
+
+The **Course Requirements** feature helps learners find the activities that Coursera marks as relevant to passing a course. Instead of listing every video, reading, and practice item, it builds a focused view of graded or passable work and lets the user navigate directly to supported activities from the popup.
+
+### What it does
+
+When **Course Requirements** is opened, the extension:
+
+* Loads Coursera's current course-material structure for the active `/learn/` course.
+* Matches passable elements and assignment groups to their underlying course items.
+* Organizes the results by module and keeps the original course order.
+* Shows the activity name, type, lesson, and estimated time when available.
+* Marks activities that Coursera explicitly identifies as **Required**.
+* Shows relative grading-weight percentages when the returned weight data is complete enough to calculate them safely.
+* Explains grouped choices such as **Pass 1 choice** when Coursera allows the learner to satisfy a requirement using one or more alternatives.
+* Marks locked activities and exposes Coursera's lock reason when provided.
+* Builds direct links for supported quizzes, exams, assignments, peer reviews, and programming activities.
+* Marks an item as **Link unavailable** instead of inventing a route when its type cannot be mapped safely.
+
+### How requirements are detected
+
+The feature prefers Coursera's explicit passing metadata:
+
+* `onDemandCourseMaterialPassableLessonElements.v1` identifies individual passable items, grading weights, and whether an item is required for passing.
+* `onDemandCourseMaterialPassableItemGroups.v1` and `onDemandCourseMaterialPassableItemGroupChoices.v1` describe requirements where the learner can pass a certain number of activities from a group.
+* Course modules, lessons, and material items provide names, ordering, types, lock information, time estimates, and navigation data.
+
+When explicit passable metadata is available, the popup labels the result as based on confirmed Coursera requirements. If a course does not expose that metadata, the extension falls back to detecting common graded types such as quizzes, exams, staff-graded assignments, graded programming work, and peer reviews. Fallback results receive a **Detected** badge because their passing status could not be confirmed directly.
+
+### What it does not do
+
+Course Requirements is a navigation and course-structure feature. It does not:
+
+* Read the learner's completion status or determine which requirements are already finished.
+* Read the learner's current grade.
+* Calculate the course's final passing threshold.
+* Guarantee that completing every displayed item will pass the course.
+* Include ordinary videos, readings, optional practice, or ungraded material unless Coursera explicitly references an item as part of a passable requirement.
+
+Coursera can return incomplete or course-specific metadata. When an item cannot be resolved or linked confidently, the popup reports that limitation rather than presenting it as confirmed information.
 
 ## 🔐 Coursera Request Interception
 
