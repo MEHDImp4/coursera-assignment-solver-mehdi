@@ -17,7 +17,10 @@
         "*://*.coursera.org/learn/*"
       ],
       "js": [
-        "content.js"
+        "course-requirements.js",
+        "assessment-parser.js",
+        "content.js",
+        "content-adapters.js"
       ]
     },
     {
