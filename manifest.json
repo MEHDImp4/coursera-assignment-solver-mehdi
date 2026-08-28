@@ -19,6 +19,7 @@
       "js": [
         "course-requirements.js",
         "assessment-parser.js",
+        "coursera-api.js",
         "content.js",
         "content-adapters.js"
       ]
