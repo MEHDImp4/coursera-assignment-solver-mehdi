@@ -22,5 +22,23 @@ jobs:
         with:
           node-version: 22
 
+      - name: Check JavaScript syntax
+        run: |
+          for file in \
+            ai-providers.js \
+            background.js \
+            content.js \
+            course-requirements.js \
+            assessment-parser.js \
+            coursera-api.js \
+            content-adapters.js \
+            diagnostics.js \
+            dry-run.js \
+            intercept-policy.js \
+            intercept.js \
+            popup.js; do
+            node --check "$file"
+          done
+
       - name: Run test suite
         run: node --test tests/*.test.js
