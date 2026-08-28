@@ -3,17 +3,45 @@
 
   const requirements = globalThis.CourseRequirementsKit;
   const parser = globalThis.AssessmentParserKit;
+  const courseraApi = globalThis.CourseraApiKit;
 
-  if (!requirements || !parser) {
+  if (!requirements || !parser || !courseraApi) {
     console.warn("Coursera parser modules were not loaded; keeping legacy content.js implementations.");
     return;
   }
 
-  // Progressive extraction: content.js still owns browser messaging and Monaco I/O,
-  // while pure parsing/normalization lives in independently testable modules.
+  // Progressive extraction: content.js still owns browser messaging, mutation actions,
+  // banners, and Monaco I/O. Pure parsing/normalization/request construction lives
+  // in independently testable modules and is delegated here.
   normalizeCourseRequirements = requirements.normalizeCourseRequirements;
+  getCurrentCourseSlug = function () {
+    return courseraApi.courseSlugFromPath(window.location.pathname);
+  };
   assessmentQuestionBlocks = function () {
     return parser.assessmentQuestionBlocks(document);
+  };
+
+  loadCourseMaterials = async function () {
+    if (capturedCourseMaterials?.linked?.["onDemandCourseMaterialItems.v2"]) {
+      return capturedCourseMaterials;
+    }
+
+    const courseSlug = getCurrentCourseSlug();
+    if (!courseSlug) throw new Error("Open a Coursera course page first.");
+
+    const response = await fetch(courseraApi.buildCourseMaterialsUrl(courseSlug), {
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(courseraApi.courseMaterialsError(response.status));
+
+    const materials = await response.json();
+    if (!courseraApi.hasSupportedCourseMaterials(materials)) {
+      throw new Error("Coursera returned course materials in an unsupported format.");
+    }
+
+    capturedCourseMaterials = materials;
+    capturedCourseId = courseSlug;
+    return materials;
   };
 
   scrapeAssessmentDetailed = async function () {
@@ -60,9 +88,26 @@
     return { questions, issues };
   };
 
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request.action !== "getParserDiagnostics") return false;
+    sendResponse({
+      data: {
+        selectors: parser.selectorDiagnostics(document),
+        modules: {
+          requirements: "course-requirements.js",
+          assessmentParser: "assessment-parser.js",
+          courseraApi: "coursera-api.js",
+          mode: "progressive-extraction"
+        }
+      }
+    });
+    return false;
+  });
+
   globalThis.CourseraContentModules = Object.freeze({
     requirements: "course-requirements.js",
     assessmentParser: "assessment-parser.js",
+    courseraApi: "coursera-api.js",
     mode: "progressive-extraction"
   });
 })();
