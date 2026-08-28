@@ -4,7 +4,8 @@ const {
   buildDryRunReport,
   formatDryRunSummary,
   summarizeIssue,
-  summarizeQuestion
+  summarizeQuestion,
+  summarizeParserDiagnostics
 } = require("../diagnostics.js");
 
 test("builds a metadata-only dry-run report", () => {
@@ -60,6 +61,42 @@ test("sanitizes parser issue details", () => {
     questionNumber: 4,
     code: "missing-options"
   });
+});
+
+test("sanitizes parser module and selector diagnostics", () => {
+  assert.deepEqual(summarizeParserDiagnostics({
+    selectors: {
+      strategy: "semantic",
+      semanticCandidates: 5,
+      semanticPrompts: 4,
+      legacyCandidates: 2,
+      rawHtml: "private"
+    },
+    modules: {
+      assessmentParser: "assessment-parser.js",
+      courseraApi: "coursera-api.js"
+    },
+    token: "secret"
+  }), {
+    selectorStrategy: "semantic",
+    semanticCandidates: 5,
+    semanticPrompts: 4,
+    legacyCandidates: 2,
+    modules: {
+      assessmentParser: "assessment-parser.js",
+      courseraApi: "coursera-api.js"
+    }
+  });
+});
+
+test("attaches sanitized parser diagnostics to dry-run reports", () => {
+  const report = buildDryRunReport([], [], {
+    selectors: { strategy: "legacy", legacyCandidates: 3 },
+    modules: { mode: "progressive-extraction" }
+  });
+  assert.equal(report.parser.selectorStrategy, "legacy");
+  assert.equal(report.parser.legacyCandidates, 3);
+  assert.equal(report.parser.modules.mode, "progressive-extraction");
 });
 
 test("caps detailed issues while preserving the total count", () => {
