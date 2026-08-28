@@ -92,6 +92,7 @@
     </div>
     <button id="explainBtn" class="btn btn-primary" type="button">Solve Current Quiz</button>
     <button id="dialogueBtn" class="btn btn-secondary" type="button">Fill Dialogue Answer</button>
+    <button id="dryRunBtn" class="btn btn-secondary" type="button" title="Inspect assessment structure without calling AI or modifying the page">Dry Run (Read-only)</button>
     <div class="button-row">
       <button id="showQuestionsBtn" class="btn btn-secondary" type="button">Copy Questions</button>
       <button id="getGradedLinksBtn" class="btn btn-secondary" type="button">Course Requirements</button>
@@ -119,6 +120,8 @@
   </footer>
 
   <script src="ai-providers.js"></script>
+  <script src="diagnostics.js"></script>
   <script src="popup.js"></script>
+  <script src="dry-run.js"></script>
 </body>
 </html>
