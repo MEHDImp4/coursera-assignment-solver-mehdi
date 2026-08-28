@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<body>
+  <section data-testid="part-Submission_MultipleChoiceQuestion">
+    <div id="prompt-1"><div data-testid="cml-viewer">Which option is a placeholder?</div></div>
+    <label class="rc-Option">
+      <input type="radio" name="q1">
+      <span data-testid="cml-viewer">Option A</span>
+    </label>
+    <label class="rc-Option">
+      <input type="radio" name="q1">
+      <span data-testid="cml-viewer">Option B</span>
+    </label>
+  </section>
+
+  <section data-testid="part-Submission_MultipleResponseQuestion">
+    <div id="prompt-2"><div data-testid="cml-viewer">Select placeholder values.</div></div>
+    <label class="rc-Option">
+      <input type="checkbox">
+      <span data-testid="cml-viewer">Alpha</span>
+    </label>
+    <label class="rc-Option">
+      <input type="checkbox">
+      <span data-testid="cml-viewer">Beta</span>
+    </label>
+  </section>
+
+  <section data-testid="part-Submission_TextQuestion">
+    <div id="prompt-3"><div data-testid="cml-viewer">Enter placeholder text.</div></div>
+    <input type="text">
+  </section>
+
+  <section data-testid="part-Submission_CodeExpressionQuestion">
+    <div id="prompt-4"><div data-testid="cml-viewer">Inspect placeholder code.</div></div>
+    <div data-mode-id="javascript">
+      <div class="monaco-editor" data-uri="inmemory://model/example"></div>
+    </div>
+    <div class="cml-code-evaluator"></div>
+  </section>
+</body>
+</html>
