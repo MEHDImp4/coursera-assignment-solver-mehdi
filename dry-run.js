@@ -76,6 +76,9 @@
     } else {
       badges.append(createBadge("No parser issues", "required"));
     }
+    if (report.parser?.selectorStrategy) {
+      badges.append(createBadge(`DOM: ${report.parser.selectorStrategy}`, "detected"));
+    }
     Object.entries(report.questionTypes || {}).forEach(([type, count]) => {
       badges.append(createBadge(`${count} ${type}`, "detected"));
     });
@@ -117,7 +120,15 @@
 
       const questions = Array.isArray(response?.data) ? response.data : [];
       const issues = Array.isArray(response?.issues) ? response.issues : [];
-      const report = diagnostics.buildDryRunReport(questions, issues);
+      let parserDiagnostics = null;
+      try {
+        const parserResponse = await sendTabMessage(tab.id, { action: "getParserDiagnostics" });
+        parserDiagnostics = parserResponse?.data || null;
+      } catch {
+        // Older content scripts can still produce the core read-only report.
+      }
+
+      const report = diagnostics.buildDryRunReport(questions, issues, parserDiagnostics);
       renderReport(report);
     } catch (error) {
       showError(error.message || "Refresh the Coursera page, then try the dry run again.");
