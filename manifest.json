@@ -26,6 +26,7 @@
         "*://*.coursera.org/learn/*"
       ],
       "js": [
+        "intercept-policy.js",
         "intercept.js"
       ],
       "world": "MAIN"
