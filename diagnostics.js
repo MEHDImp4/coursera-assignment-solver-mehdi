@@ -79,7 +79,34 @@
     return summary;
   }
 
-  function buildDryRunReport(questions, issues) {
+  function safeCount(value) {
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 0 ? number : 0;
+  }
+
+  function summarizeParserDiagnostics(value) {
+    if (!value || typeof value !== "object") return null;
+    const selectors = value.selectors && typeof value.selectors === "object" ? value.selectors : {};
+    const modules = value.modules && typeof value.modules === "object" ? value.modules : {};
+    const safeModules = {};
+
+    Object.entries(modules).slice(0, 10).forEach(([key, moduleName]) => {
+      const safeKey = normalizedText(key).slice(0, 60);
+      const safeValue = normalizedText(moduleName).slice(0, 100);
+      if (safeKey && safeValue) safeModules[safeKey] = safeValue;
+    });
+
+    const strategy = normalizedText(selectors.strategy).toLowerCase();
+    return {
+      selectorStrategy: ["semantic", "legacy", "none"].includes(strategy) ? strategy : "unknown",
+      semanticCandidates: safeCount(selectors.semanticCandidates),
+      semanticPrompts: safeCount(selectors.semanticPrompts),
+      legacyCandidates: safeCount(selectors.legacyCandidates),
+      modules: safeModules
+    };
+  }
+
+  function buildDryRunReport(questions, issues, parserDiagnostics) {
     const questionList = Array.isArray(questions) ? questions : [];
     const issueList = Array.isArray(issues) ? issues : [];
     const questionSummaries = questionList.map(summarizeQuestion);
@@ -98,6 +125,7 @@
       questions: questionSummaries,
       issues: issueList.slice(0, 20).map(summarizeIssue),
       truncatedIssues: Math.max(0, issueList.length - 20),
+      parser: summarizeParserDiagnostics(parserDiagnostics),
       guarantees: {
         aiCalled: false,
         domModified: false,
@@ -120,6 +148,7 @@
     buildDryRunReport,
     formatDryRunSummary,
     summarizeQuestion,
-    summarizeIssue
+    summarizeIssue,
+    summarizeParserDiagnostics
   };
 });
