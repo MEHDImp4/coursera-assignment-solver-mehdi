@@ -111,9 +111,9 @@
       const route = requirementRoute(type);
       const gradingWeight = Number(passable?.gradingWeight);
       const hasGradingWeight = Number.isFinite(gradingWeight) && gradingWeight > 0;
-      const safeItemSlug = item.slug ? encodeURIComponent(item.slug) : "";
-      const link = route && safeItemSlug
-        ? `https://www.coursera.org/learn/${encodeURIComponent(courseSlug)}/${route}/${encodeURIComponent(item.id)}/${safeItemSlug}`
+      const itemSlug = item.slug ? String(item.slug) : "";
+      const link = route && itemSlug
+        ? `https://www.coursera.org/learn/${encodeURIComponent(courseSlug)}/${route}/${encodeURIComponent(item.id)}/${encodeURIComponent(itemSlug)}`
         : null;
 
       requirements.push({
