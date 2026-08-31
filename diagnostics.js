@@ -7,6 +7,14 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  const SAFE_HEADER_NAMES = new Set([
+    "x-csrf2-cookie",
+    "x-csrf2-token",
+    "x-csrf3-token",
+    "x-csrftoken",
+    "x-requested-with"
+  ]);
+
   function normalizedText(value) {
     return typeof value === "string" ? value.trim() : "";
   }
@@ -84,6 +92,25 @@
     return Number.isInteger(number) && number >= 0 ? number : 0;
   }
 
+  function summarizeCourseState(value) {
+    if (!value || typeof value !== "object") return null;
+    const observedHeaderNames = Array.isArray(value.observedHeaderNames)
+      ? [...new Set(value.observedHeaderNames
+        .map((name) => normalizedText(name).toLowerCase())
+        .filter((name) => SAFE_HEADER_NAMES.has(name)))]
+        .sort()
+        .slice(0, 10)
+      : [];
+
+    return {
+      onCourseRoute: value.onCourseRoute === true,
+      courseRevision: safeCount(value.courseRevision),
+      hasCourseMaterials: value.hasCourseMaterials === true,
+      observedHeaderNames,
+      hasUserContext: value.hasUserContext === true
+    };
+  }
+
   function summarizeParserDiagnostics(value) {
     if (!value || typeof value !== "object") return null;
     const selectors = value.selectors && typeof value.selectors === "object" ? value.selectors : {};
@@ -98,10 +125,14 @@
 
     const strategy = normalizedText(selectors.strategy).toLowerCase();
     return {
-      selectorStrategy: ["semantic", "legacy", "none"].includes(strategy) ? strategy : "unknown",
+      selectorStrategy: ["semantic", "legacy", "mixed", "none"].includes(strategy) ? strategy : "unknown",
       semanticCandidates: safeCount(selectors.semanticCandidates),
       semanticPrompts: safeCount(selectors.semanticPrompts),
       legacyCandidates: safeCount(selectors.legacyCandidates),
+      legacyPrompts: safeCount(selectors.legacyPrompts),
+      invalidCandidates: safeCount(selectors.invalidCandidates),
+      selectedBlocks: safeCount(selectors.selectedBlocks),
+      state: summarizeCourseState(value.state),
       modules: safeModules
     };
   }
@@ -149,6 +180,7 @@
     formatDryRunSummary,
     summarizeQuestion,
     summarizeIssue,
+    summarizeCourseState,
     summarizeParserDiagnostics
   };
 });
