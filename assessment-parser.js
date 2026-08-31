@@ -9,6 +9,7 @@
   const SEMANTIC_PROMPT_SELECTOR = '[id^="prompt-"] [data-testid="cml-viewer"]';
   const LEGACY_BLOCK_SELECTOR = ".css-1erl2aq, .css-12u8wr5";
   const OPTION_SELECTOR = ".rc-Option";
+  const WRITTEN_INPUT_SELECTOR = 'input[type="text"], input:not([type]), textarea:not(.inputarea)';
   const DOCUMENT_POSITION_PRECEDING = 2;
   const DOCUMENT_POSITION_FOLLOWING = 4;
 
@@ -42,6 +43,7 @@
       !semanticBlocks.some((semanticBlock) => blocksOverlap(legacyBlock, semanticBlock))
     ));
     const selectedBlocks = sortInDocumentOrder([...semanticBlocks, ...distinctLegacyBlocks]);
+    const uniqueCandidates = [...new Set([...semanticCandidates, ...legacyCandidates])];
 
     let strategy = "none";
     if (semanticBlocks.length > 0 && distinctLegacyBlocks.length > 0) strategy = "mixed";
@@ -55,7 +57,8 @@
       legacyCandidates,
       legacyBlocks,
       distinctLegacyBlocks,
-      selectedBlocks
+      selectedBlocks,
+      invalidCandidates: uniqueCandidates.filter((candidate) => !hasPrompt(candidate)).length
     };
   }
 
@@ -92,9 +95,7 @@
 
   function detectWrittenType(block) {
     const slateEditor = block.querySelector('[data-slate-editor="true"]');
-    const standardInput = block.querySelector(
-      'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea)'
-    );
+    const standardInput = block.querySelector(WRITTEN_INPUT_SELECTOR);
     if (slateEditor) return "essay";
     if (standardInput) return "text_input";
     return "unknown";
@@ -133,9 +134,7 @@
       semanticPrompts: state.semanticBlocks.length,
       legacyCandidates: state.legacyCandidates.length,
       legacyPrompts: state.legacyBlocks.length,
-      invalidCandidates:
-        (state.semanticCandidates.length - state.semanticBlocks.length) +
-        (state.legacyCandidates.length - state.legacyBlocks.length),
+      invalidCandidates: state.invalidCandidates,
       selectedBlocks: state.selectedBlocks.length
     };
   }
@@ -145,7 +144,8 @@
       semanticBlock: SEMANTIC_BLOCK_SELECTOR,
       semanticPrompt: SEMANTIC_PROMPT_SELECTOR,
       legacyBlock: LEGACY_BLOCK_SELECTOR,
-      option: OPTION_SELECTOR
+      option: OPTION_SELECTOR,
+      writtenInput: WRITTEN_INPUT_SELECTOR
     },
     assessmentQuestionBlocks,
     promptText,
