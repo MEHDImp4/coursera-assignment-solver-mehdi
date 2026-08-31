@@ -138,6 +138,7 @@
           courseraApi: "coursera-api.js",
           courseState: "coursera-state.js",
           monacoBridge: "monaco-bridge.js",
+          presentation: "presentation.js",
           mode: "progressive-extraction"
         }
       }
@@ -151,6 +152,7 @@
     courseraApi: "coursera-api.js",
     courseState: "coursera-state.js",
     monacoBridge: "monaco-bridge.js",
+    presentation: "presentation.js",
     mode: "progressive-extraction"
   });
 })();
