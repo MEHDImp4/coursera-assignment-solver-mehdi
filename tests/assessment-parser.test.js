@@ -86,16 +86,16 @@ test("keeps distinct legacy blocks on mixed pages without duplicating dual-match
   });
 });
 
-test("filters candidates without prompts and reports malformed selector candidates", () => {
-  const missingSemanticPrompt = fakeNode();
+test("filters candidates without prompts and counts dual-matched invalid candidates once", () => {
+  const missingPromptDualMatched = fakeNode();
   const validSemantic = fakeNode({
     singles: { [parser.selectors.semanticPrompt]: prompt("Recoverable") }
   });
   const missingLegacyPrompt = fakeNode();
   const doc = fakeNode({
     lists: {
-      [parser.selectors.semanticBlock]: [missingSemanticPrompt, validSemantic],
-      [parser.selectors.legacyBlock]: [missingLegacyPrompt]
+      [parser.selectors.semanticBlock]: [missingPromptDualMatched, validSemantic],
+      [parser.selectors.legacyBlock]: [missingPromptDualMatched, missingLegacyPrompt]
     }
   });
 
@@ -104,7 +104,7 @@ test("filters candidates without prompts and reports malformed selector candidat
     strategy: "semantic",
     semanticCandidates: 2,
     semanticPrompts: 1,
-    legacyCandidates: 1,
+    legacyCandidates: 2,
     legacyPrompts: 0,
     invalidCandidates: 2,
     selectedBlocks: 1
@@ -138,7 +138,7 @@ test("extracts multiple-answer, text, essay, and code shells", () => {
   const text = fakeNode({
     singles: {
       [parser.selectors.semanticPrompt]: prompt("Type text"),
-      'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea)': fakeNode()
+      [parser.selectors.writtenInput]: fakeNode()
     },
     lists: { [parser.selectors.option]: [] }
   });
@@ -163,6 +163,20 @@ test("extracts multiple-answer, text, essay, and code shells", () => {
   assert.equal(codeResult.question.type, "code_expression");
 });
 
+test("does not treat hidden or button inputs as written answers", () => {
+  const hiddenOnly = fakeNode({
+    singles: {
+      [parser.selectors.semanticPrompt]: prompt("No writable field"),
+      [parser.selectors.writtenInput]: null,
+      'input[type="hidden"]': fakeNode(),
+      'input[type="button"]': fakeNode()
+    },
+    lists: { [parser.selectors.option]: [] }
+  });
+
+  assert.equal(parser.extractQuestionShell(hiddenOnly, 1).question.type, "unknown");
+});
+
 test("ignores malformed options and falls back to a supported written field", () => {
   const malformedOption = fakeNode({
     singles: {
@@ -172,7 +186,7 @@ test("ignores malformed options and falls back to a supported written field", ()
   const text = fakeNode({
     singles: {
       [parser.selectors.semanticPrompt]: prompt("Recoverable text"),
-      'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea)': fakeNode()
+      [parser.selectors.writtenInput]: fakeNode()
     },
     lists: { [parser.selectors.option]: [malformedOption] }
   });
