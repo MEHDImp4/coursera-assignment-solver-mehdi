@@ -40,7 +40,12 @@ function captureRequestHeaders(headers) {
 window.addEventListener("message", (event) => {
 
     // We only accept messages from ourselves
-    if (event.source !== window || !event.data || event.data.source !== "auto-coursera-interceptor") {
+    if (
+        event.source !== window ||
+        event.origin !== window.location.origin ||
+        !event.data ||
+        event.data.source !== "auto-coursera-interceptor"
+    ) {
         return;
     }
 
@@ -120,9 +125,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         sendResponse({ status: "started" });
         startCompletionLoop();
+        return true;
     }
-    // Return true to indicate we will send a response asynchronously
-    return true;
+    return false;
 });
 
 function readRuntime() {
@@ -152,6 +157,7 @@ function requestMonacoBridge(action, payload = {}) {
         function handleResponse(event) {
             if (
                 event.source !== window ||
+                event.origin !== window.location.origin ||
                 event.data?.source !== "auto-coursera-monaco-response" ||
                 event.data?.requestId !== requestId
             ) return;
@@ -168,7 +174,7 @@ function requestMonacoBridge(action, payload = {}) {
             requestId,
             action,
             ...payload
-        }, "*");
+        }, window.location.origin);
     });
 }
 
