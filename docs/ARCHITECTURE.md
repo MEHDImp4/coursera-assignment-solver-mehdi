@@ -18,13 +18,13 @@ These modules are written so they can be loaded in the browser and required dire
 ### Monaco bridge
 
 - `monaco-bridge.js` — identifies the editable Monaco model, validates model URIs/actions, and provides the window-message transport used for read-side editor inspection.
-- The progressive adapter currently uses this module for editor detection and **read-model** requests.
+- The read runtime uses this module for editor detection and **read-model** requests.
 - The legacy write path remains in `content.js` for now to avoid changing mutation behavior during this refactor.
 
 ### Browser integration
 
-- `content.js` — legacy integration layer. It still owns Chrome messaging, legacy state capture, mutation actions, write-side Monaco behavior, completion flows, and banners.
-- `content-adapters.js` — transition layer loaded after `content.js`. It delegates parsing, course metadata normalization, course-scoped read cache, course-material URL construction, and Monaco read inspection to the extracted modules.
+- `content.js` — orchestration/integration layer. Covered read-only helpers are now thin delegates to `CourseraReadRuntime`; Chrome message routing, mutation actions, write-side Monaco behavior, completion flows, and banners remain here.
+- `content-adapters.js` — creates `globalThis.CourseraReadRuntime` and owns the modular read path for parsing, course metadata normalization, course-scoped cache, course-material requests, and Monaco read inspection.
 - `intercept.js` — MAIN-world network hook, constrained by `intercept-policy.js`.
 
 ### Popup
@@ -45,7 +45,7 @@ The isolated-world scripts intentionally load in this order:
 6. `content.js`
 7. `content-adapters.js`
 
-The extracted modules are available before the legacy script executes, and the adapter then replaces selected legacy entry points with tested implementations.
+The extracted modules load before the integration layer. `content-adapters.js` then exposes the stable `CourseraReadRuntime` object used by the read-only delegates in `content.js`.
 
 ## Course-scoped cache
 
@@ -62,9 +62,26 @@ The modular state snapshot is deliberately metadata-only:
 
 It never returns header values, cookies, authorization data, CSRF values, or learner IDs.
 
+## Read-runtime cleanup
+
+After browser smoke coverage was established, the duplicated read-only implementations were removed from `content.js`.
+
+`content.js` now keeps only small delegates for:
+
+- current course slug lookup;
+- course-material loading;
+- course-requirement normalization;
+- assessment block discovery;
+- Monaco editor description;
+- detailed read-only assessment scraping.
+
+The implementation for those responsibilities lives in `CourseraReadRuntime`, backed by the extracted modules. This removed more than 300 legacy lines from `content.js` without modifying the existing mutation/submission paths.
+
+`tests/content-read-runtime-contract.test.js` prevents the removed legacy helper bodies from being reintroduced and verifies that the adapter exposes a stable runtime object instead of reassigning legacy globals.
+
 ## Why progressive extraction?
 
-`content.js` mixes network state, course parsing, assessment parsing, Monaco integration, UI feedback, and mutation behavior. Rewriting it wholesale would create a large regression surface. Progressive extraction allows each responsibility to gain fixtures and tests first, then lets duplicated legacy implementations be removed in smaller follow-up changes.
+`content.js` mixes network state, course parsing, assessment parsing, Monaco integration, UI feedback, and mutation behavior. Rewriting it wholesale would create a large regression surface. Progressive extraction lets each responsibility gain fixtures and tests first, then removes duplicated implementations only after the replacement path is covered.
 
 ## Fixtures
 
@@ -87,7 +104,7 @@ The smoke harness asserts that:
 - the Monaco model URI and language are discovered correctly;
 - the fixture DOM and form-control state are byte-for-byte equivalent before and after read-side inspection.
 
-The harness has no network dependency on Coursera, no AI-provider calls, and no Chrome-extension messaging. A failure blocks CI before further legacy removal.
+The harness has no network dependency on Coursera, no AI-provider calls, and no Chrome-extension messaging.
 
 ## Test strategy
 
@@ -101,12 +118,13 @@ The GitHub Actions workflow runs:
 - Monaco bridge validation/transport tests;
 - interception-policy tests;
 - Dry Run diagnostics tests;
-- popup/manifest/module-load contract tests;
+- popup/manifest/module-load contracts;
+- read-runtime cleanup contracts;
 - a real headless-browser smoke test against sanitized local fixtures.
 
 ## Current migration status
 
-Extracted and covered by tests:
+Extracted, delegated, and covered by tests:
 
 - course-requirement normalization;
 - assessment selector strategy and question-shell parsing;
@@ -123,15 +141,15 @@ Still intentionally legacy:
 - banner/presentation helpers;
 - write-side Monaco application path;
 - course completion/media mutation flows;
-- duplicated helper definitions inside `content.js`, now eligible for conservative removal because the read-side adapter path has browser smoke coverage.
+- other mutation-oriented integration code.
 
 ## Next extraction candidates
 
 The next safe refactors are:
 
-1. remove duplicated legacy course-requirement/API/parser helper implementations now covered by the browser harness and unit tests;
-2. move banner/UI feedback into a small presentation adapter;
-3. add more sanitized fixture variants for selector fallback and malformed structures;
+1. move banner/UI feedback into a small presentation adapter;
+2. add more sanitized fixture variants for selector fallback and malformed structures;
+3. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
 4. continue shrinking `content.js` without expanding live assessment automation behavior.
 
 Automatic assessment submission is intentionally outside the scope of this architecture work.
