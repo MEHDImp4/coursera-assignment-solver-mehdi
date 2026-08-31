@@ -22,6 +22,7 @@
         "coursera-api.js",
         "coursera-state.js",
         "monaco-bridge.js",
+        "presentation.js",
         "content.js",
         "content-adapters.js"
       ]
