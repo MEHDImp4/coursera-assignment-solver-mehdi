@@ -7,7 +7,7 @@ This fork is moving away from a single large `content.js` file through a progres
 ### Pure modules
 
 - `course-requirements.js` — normalizes Coursera course-material metadata into a stable list of grade-relevant activities.
-- `assessment-parser.js` — owns assessment DOM selectors, question-block discovery, option extraction, and question-type classification.
+- `assessment-parser.js` — owns assessment DOM selectors, question-block discovery, option extraction, and question-type classification. It supports semantic, legacy, and mixed selector layouts, filters promptless candidates, and deduplicates blocks that match both selector families.
 - `coursera-api.js` — builds and validates course-material API requests and course slugs.
 - `coursera-state.js` — keeps read-side course state and materials cache scoped to the active course. Diagnostics expose only header names and boolean context flags, never token/header values or learner IDs.
 - `diagnostics.js` — converts parser results into metadata-only read-only reports.
@@ -101,6 +101,20 @@ The presentation module is covered by unit tests for:
 
 `tests/content-presentation-contract.test.js` prevents the old banner DOM implementation from returning to `content.js`.
 
+## Selector resilience
+
+`assessment-parser.js` no longer treats semantic and legacy selectors as mutually exclusive for the whole page. It now:
+
+- accepts semantic blocks that contain a valid prompt;
+- accepts legacy blocks that contain a valid prompt;
+- combines distinct semantic and legacy questions on partially migrated pages;
+- removes dual-matched or nested duplicates;
+- preserves document order where browser DOM ordering is available;
+- filters candidates that have no prompt before extraction;
+- reports `semanticCandidates`, `semanticPrompts`, `legacyCandidates`, `legacyPrompts`, `invalidCandidates`, and `selectedBlocks` in metadata-only selector diagnostics.
+
+The strategy is reported as `semantic`, `legacy`, `mixed`, or `none`.
+
 ## Why progressive extraction?
 
 `content.js` mixes network state, course parsing, assessment parsing, Monaco integration, UI feedback, and mutation behavior. Rewriting it wholesale would create a large regression surface. Progressive extraction lets each responsibility gain fixtures and tests first, then removes duplicated implementations only after the replacement path is covered.
@@ -110,21 +124,26 @@ The presentation module is covered by unit tests for:
 Sanitized regression fixtures live under `tests/fixtures/`.
 
 - `course-materials-confirmed.json` represents a small course-material response with confirmed passable metadata.
-- `assessment-basic.html` represents the structural markers for common assessment types without real course content, account identifiers, tokens, or answers.
+- `assessment-basic.html` covers the normal semantic structure and common assessment types.
+- `assessment-legacy.html` covers the legacy block selectors without semantic block attributes.
+- `assessment-mixed.html` covers a dual-matched block plus a distinct legacy-only block so deduplication and mixed selection are exercised.
+- `assessment-malformed.html` covers promptless candidates and an incomplete option structure that must safely fall back to a supported text field.
 
-Fixtures must never contain cookies, authorization headers, CSRF values, real learner IDs, real assessment answers, or copied private course content.
+Fixtures contain only synthetic text and structural markers. They must never contain cookies, authorization headers, CSRF values, real learner IDs, real assessment answers, or copied private course content.
 
 ## Browser smoke harness
 
-`tests/browser/read-only-smoke.html` runs the extracted parser and Monaco descriptor code in a real browser against the sanitized assessment fixture. `tests/browser/run-smoke.sh` serves the repository only on `127.0.0.1` and launches the Chrome/Chromium binary already available on the CI runner.
+`tests/browser/read-only-smoke.html` runs the extracted parser and Monaco descriptor code in a real browser against all sanitized assessment fixtures. `tests/browser/run-smoke.sh` serves the repository only on `127.0.0.1` and launches the Chrome/Chromium binary already available on the CI runner.
 
 The smoke harness asserts that:
 
-- four fixture questions are discovered;
-- their detected types are `single_answer`, `multiple_answer`, `text_input`, and `code_expression`;
-- the semantic selector strategy is selected;
-- the Monaco model URI and language are discovered correctly;
-- the fixture DOM and form-control state are byte-for-byte equivalent before and after read-side inspection.
+- the normal semantic fixture still exposes the four expected question types;
+- the legacy fixture selects the legacy strategy and extracts supported questions;
+- the mixed fixture selects both distinct semantic and legacy questions without duplicating a block that matches both families;
+- the malformed fixture ignores promptless candidates and safely classifies the recoverable text question;
+- selector candidate/invalid counts match expectations;
+- the Monaco model URI and language are discovered correctly on the basic fixture;
+- every fixture DOM and form-control state is byte-for-byte equivalent before and after read-side inspection.
 
 The harness has no network dependency on Coursera, no AI-provider calls, and no Chrome-extension messaging.
 
@@ -135,7 +154,7 @@ The GitHub Actions workflow runs:
 - `node --check` against extension JavaScript files, including the extracted state, Monaco, and presentation modules;
 - unit tests for provider request construction;
 - unit tests for course requirements normalization;
-- unit tests for assessment classification and selector strategy;
+- unit tests for assessment classification, semantic/legacy/mixed selector strategy, malformed candidates, and option fallback;
 - course-state/cache isolation tests;
 - Monaco bridge validation/transport tests;
 - presentation rendering/timer tests;
@@ -143,7 +162,7 @@ The GitHub Actions workflow runs:
 - Dry Run diagnostics tests;
 - popup/manifest/module-load contracts;
 - read-runtime and presentation cleanup contracts;
-- a real headless-browser smoke test against sanitized local fixtures.
+- a real headless-browser smoke test against all sanitized assessment fixtures.
 
 ## Current migration status
 
@@ -151,6 +170,7 @@ Extracted, delegated, and covered by tests:
 
 - course-requirement normalization;
 - assessment selector strategy and question-shell parsing;
+- semantic/legacy/mixed selector fallback and malformed-structure handling;
 - course-material API URL/response helpers;
 - read-side course state and course-scoped materials cache;
 - Monaco editor detection and read-side bridge transport;
@@ -170,9 +190,9 @@ Still intentionally legacy:
 
 The next safe refactors are:
 
-1. add more sanitized fixture variants for selector fallback and malformed structures;
-2. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
-3. isolate generic Chrome message routing/error serialization from feature-specific actions;
+1. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
+2. isolate generic Chrome message routing/error serialization from feature-specific actions;
+3. add structural regression coverage for navigation/course changes where a full page reload does not occur;
 4. continue shrinking `content.js` without expanding live assessment automation behavior.
 
 Automatic assessment submission is intentionally outside the scope of this architecture work.
