@@ -9,9 +9,15 @@
 
   function setLoading(loading) {
     button.disabled = loading;
-    button.innerHTML = loading
-      ? '<span class="spinner" aria-hidden="true"></span>Inspecting…'
-      : "Dry Run (Read-only)";
+    button.replaceChildren();
+    if (loading) {
+      const spinner = document.createElement("span");
+      spinner.className = "spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      button.append(spinner, document.createTextNode("Inspecting…"));
+      return;
+    }
+    button.textContent = "Dry Run (Read-only)";
   }
 
   function showError(message) {
