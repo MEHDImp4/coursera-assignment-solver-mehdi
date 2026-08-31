@@ -65,5 +65,6 @@ test("adapter documents progressive extraction and exposes sanitized diagnostics
   assert.match(adapterSource, /CourseraApiKit/);
   assert.match(adapterSource, /CourseraStateKit/);
   assert.match(adapterSource, /MonacoBridgeKit/);
+  assert.match(adapterSource, /presentation:\s*"presentation\.js"/);
   assert.match(adapterSource, /courseState\.snapshot\(\)/);
 });
