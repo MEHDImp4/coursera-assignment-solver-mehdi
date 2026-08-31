@@ -10,7 +10,7 @@
   const REQUEST_SOURCE = "auto-coursera-monaco-request";
   const RESPONSE_SOURCE = "auto-coursera-monaco-response";
   const DOCUMENT_POSITION_FOLLOWING = 4;
-  const ALLOWED_ACTIONS = new Set(["read-model", "replace-model"]);
+  const ALLOWED_ACTIONS = new Set(["read-model"]);
 
   function normalizeModelUri(value) {
     const modelUri = String(value || "").trim();
@@ -54,10 +54,6 @@
     const modelUri = normalizeModelUri(payload?.modelUri);
     if (!modelUri) throw new Error("A supported Monaco model URI is required.");
 
-    if (action === "replace-model" && typeof payload?.value !== "string") {
-      throw new Error("A replacement string is required.");
-    }
-
     return {
       ...payload,
       modelUri
@@ -77,6 +73,7 @@
     const timeoutMs = Number.isFinite(Number(options.timeoutMs))
       ? Math.max(50, Number(options.timeoutMs))
       : 2600;
+    const targetOrigin = targetOriginFor(windowObject);
     let requestSequence = 0;
 
     function request(action, payload = {}) {
@@ -92,6 +89,7 @@
         function handleResponse(event) {
           if (
             event.source !== windowObject ||
+            (targetOrigin !== "*" && event.origin !== targetOrigin) ||
             event.data?.source !== RESPONSE_SOURCE ||
             event.data?.requestId !== requestId
           ) return;
@@ -108,7 +106,7 @@
           requestId,
           action,
           ...validatedPayload
-        }, targetOriginFor(windowObject));
+        }, targetOrigin);
       });
     }
 
