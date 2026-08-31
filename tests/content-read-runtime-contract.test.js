@@ -55,8 +55,23 @@ test("adapter owns course reads, diagnostics, and read-only message registration
   assert.doesNotMatch(adapterSource, legacyAssignments);
 });
 
+test("legacy message listener releases actions it does not own", () => {
+  assert.match(contentSource, /if \(request\.action === "completeVideos"\)[\s\S]*?startCompletionLoop\(\);\s*return true;\s*}\s*return false;\s*}\);/);
+  assert.match(contentSource, /request\.action === "fillDialogueAnswer"/);
+  assert.match(contentSource, /request\.action === "solveQuizDirectly"/);
+  assert.match(contentSource, /request\.action === "applyAIResponse"/);
+});
+
+test("window bridges require same-origin messages and exact postMessage targets", () => {
+  const originGuardMatches = contentSource.match(/event\.origin !== window\.location\.origin/g) || [];
+  assert.ok(originGuardMatches.length >= 2, "interceptor and Monaco response listeners must verify origin");
+  assert.match(contentSource, /source: "auto-coursera-monaco-request"[\s\S]*?}, window\.location\.origin\);/);
+  assert.doesNotMatch(contentSource, /}, "\*"\);/);
+});
+
 test("existing mutation integration remains outside the read-only cleanup", () => {
   assert.match(contentSource, /function requestMonacoBridge\(action, payload = \{\}\)/);
   assert.match(contentSource, /request\.action === "applyAIResponse"/);
   assert.match(contentSource, /request\.action === "solveQuizDirectly"/);
+  assert.match(contentSource, /requestMonacoBridge\("replace-model"/);
 });
