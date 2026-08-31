@@ -55,16 +55,39 @@
     let materialsSlug = "";
     let observedHeaderNames = new Set();
     let observedUserContext = false;
+    let courseRevision = 0;
+
+    function invalidateMaterials() {
+      materials = null;
+      materialsSlug = "";
+    }
 
     function setCourseSlug(nextSlug) {
       const normalized = String(nextSlug || "").trim();
       if (!normalized) return courseSlug;
+      if (normalized === courseSlug) return courseSlug;
+
       courseSlug = normalized;
-      if (materialsSlug && materialsSlug !== normalized) {
-        materials = null;
-        materialsSlug = "";
-      }
+      courseRevision += 1;
+      if (materialsSlug && materialsSlug !== normalized) invalidateMaterials();
       return courseSlug;
+    }
+
+    function clearCourse() {
+      if (!courseSlug && !materials && !materialsSlug) return false;
+      courseSlug = "";
+      invalidateMaterials();
+      courseRevision += 1;
+      return true;
+    }
+
+    function syncLocation(value) {
+      const nextSlug = courseSlugFromUrl(value);
+      if (!nextSlug) {
+        clearCourse();
+        return "";
+      }
+      return setCourseSlug(nextSlug);
     }
 
     function setCourseMaterials(nextMaterials, slug) {
@@ -74,7 +97,7 @@
       const normalizedSlug = String(slug || courseSlug || "").trim();
       if (!normalizedSlug) throw new Error("A course slug is required to cache course materials.");
 
-      courseSlug = normalizedSlug;
+      setCourseSlug(normalizedSlug);
       materialsSlug = normalizedSlug;
       materials = nextMaterials;
       return materials;
@@ -108,6 +131,8 @@
     function snapshot() {
       return {
         courseSlug,
+        onCourseRoute: Boolean(courseSlug),
+        courseRevision,
         hasCourseMaterials: Boolean(materials && materialsSlug === courseSlug),
         observedHeaderNames: [...observedHeaderNames].sort(),
         hasUserContext: observedUserContext
@@ -116,6 +141,8 @@
 
     return Object.freeze({
       setCourseSlug,
+      clearCourse,
+      syncLocation,
       setCourseMaterials,
       getCourseMaterials,
       ingestInterceptMessage,
