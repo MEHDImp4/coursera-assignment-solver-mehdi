@@ -37,11 +37,13 @@ test("prefers semantic question blocks and falls back to legacy selectors", () =
   const semanticBlock = fakeNode({
     singles: { [parser.selectors.semanticPrompt]: prompt("Question") }
   });
-  const legacyBlock = fakeNode();
+  const legacyBlock = fakeNode({
+    singles: { [parser.selectors.semanticPrompt]: prompt("Legacy question") }
+  });
   const semanticDoc = fakeNode({
     lists: {
       [parser.selectors.semanticBlock]: [semanticBlock],
-      [parser.selectors.legacyBlock]: [legacyBlock]
+      [parser.selectors.legacyBlock]: []
     }
   });
 
@@ -56,6 +58,57 @@ test("prefers semantic question blocks and falls back to legacy selectors", () =
   });
   assert.deepEqual(parser.assessmentQuestionBlocks(legacyDoc), [legacyBlock]);
   assert.equal(parser.selectorDiagnostics(legacyDoc).strategy, "legacy");
+});
+
+test("keeps distinct legacy blocks on mixed pages without duplicating dual-matched blocks", () => {
+  const dualMatched = fakeNode({
+    singles: { [parser.selectors.semanticPrompt]: prompt("Dual matched") }
+  });
+  const legacyOnly = fakeNode({
+    singles: { [parser.selectors.semanticPrompt]: prompt("Legacy only") }
+  });
+  const doc = fakeNode({
+    lists: {
+      [parser.selectors.semanticBlock]: [dualMatched],
+      [parser.selectors.legacyBlock]: [dualMatched, legacyOnly]
+    }
+  });
+
+  assert.deepEqual(parser.assessmentQuestionBlocks(doc), [dualMatched, legacyOnly]);
+  assert.deepEqual(parser.selectorDiagnostics(doc), {
+    strategy: "mixed",
+    semanticCandidates: 1,
+    semanticPrompts: 1,
+    legacyCandidates: 2,
+    legacyPrompts: 2,
+    invalidCandidates: 0,
+    selectedBlocks: 2
+  });
+});
+
+test("filters candidates without prompts and reports malformed selector candidates", () => {
+  const missingSemanticPrompt = fakeNode();
+  const validSemantic = fakeNode({
+    singles: { [parser.selectors.semanticPrompt]: prompt("Recoverable") }
+  });
+  const missingLegacyPrompt = fakeNode();
+  const doc = fakeNode({
+    lists: {
+      [parser.selectors.semanticBlock]: [missingSemanticPrompt, validSemantic],
+      [parser.selectors.legacyBlock]: [missingLegacyPrompt]
+    }
+  });
+
+  assert.deepEqual(parser.assessmentQuestionBlocks(doc), [validSemantic]);
+  assert.deepEqual(parser.selectorDiagnostics(doc), {
+    strategy: "semantic",
+    semanticCandidates: 2,
+    semanticPrompts: 1,
+    legacyCandidates: 1,
+    legacyPrompts: 0,
+    invalidCandidates: 2,
+    selectedBlocks: 1
+  });
 });
 
 test("extracts a single-answer question shell", () => {
@@ -110,17 +163,62 @@ test("extracts multiple-answer, text, essay, and code shells", () => {
   assert.equal(codeResult.question.type, "code_expression");
 });
 
+test("ignores malformed options and falls back to a supported written field", () => {
+  const malformedOption = fakeNode({
+    singles: {
+      '[data-testid="cml-viewer"]': fakeNode({ innerText: "Missing input" })
+    }
+  });
+  const text = fakeNode({
+    singles: {
+      [parser.selectors.semanticPrompt]: prompt("Recoverable text"),
+      'input[type="text"], input:not([type="radio"]):not([type="checkbox"]), textarea:not(.inputarea)': fakeNode()
+    },
+    lists: { [parser.selectors.option]: [malformedOption] }
+  });
+
+  const result = parser.extractQuestionShell(text, 1);
+  assert.equal(result.question.type, "text_input");
+  assert.deepEqual(result.question.options, []);
+});
+
 test("ignores blocks without a prompt", () => {
   const block = fakeNode({ lists: { [parser.selectors.option]: [] } });
   assert.equal(parser.extractQuestionShell(block, 1), null);
 });
 
-test("sanitized HTML fixture preserves the supported structural markers", () => {
-  const html = fs.readFileSync(path.join(__dirname, "fixtures", "assessment-basic.html"), "utf8");
-  assert.match(html, /part-Submission_MultipleChoiceQuestion/);
-  assert.match(html, /part-Submission_MultipleResponseQuestion/);
-  assert.match(html, /part-Submission_TextQuestion/);
-  assert.match(html, /part-Submission_CodeExpressionQuestion/);
-  assert.match(html, /data-uri="inmemory:\/\/model\/example"/);
-  assert.doesNotMatch(html, /coursera\.org\/api|Authorization|Cookie|Bearer /i);
+test("sanitized HTML fixtures preserve regression structures without account data", () => {
+  const fixtureDir = path.join(__dirname, "fixtures");
+  const fixtures = [
+    "assessment-basic.html",
+    "assessment-legacy.html",
+    "assessment-mixed.html",
+    "assessment-malformed.html"
+  ];
+
+  for (const fixture of fixtures) {
+    const html = fs.readFileSync(path.join(fixtureDir, fixture), "utf8");
+    assert.doesNotMatch(html, /coursera\.org\/api|Authorization|Cookie|Bearer |x-csrf|userId/i, fixture);
+  }
+
+  const basic = fs.readFileSync(path.join(fixtureDir, "assessment-basic.html"), "utf8");
+  assert.match(basic, /part-Submission_MultipleChoiceQuestion/);
+  assert.match(basic, /part-Submission_MultipleResponseQuestion/);
+  assert.match(basic, /part-Submission_TextQuestion/);
+  assert.match(basic, /part-Submission_CodeExpressionQuestion/);
+  assert.match(basic, /data-uri="inmemory:\/\/model\/example"/);
+
+  const legacy = fs.readFileSync(path.join(fixtureDir, "assessment-legacy.html"), "utf8");
+  assert.match(legacy, /css-1erl2aq/);
+  assert.match(legacy, /css-12u8wr5/);
+  assert.doesNotMatch(legacy, /part-Submission_/);
+
+  const mixed = fs.readFileSync(path.join(fixtureDir, "assessment-mixed.html"), "utf8");
+  assert.match(mixed, /part-Submission_MultipleChoiceQuestion/);
+  assert.match(mixed, /css-1erl2aq/);
+  assert.match(mixed, /css-12u8wr5/);
+
+  const malformed = fs.readFileSync(path.join(fixtureDir, "assessment-malformed.html"), "utf8");
+  assert.match(malformed, /Missing prompt on purpose/);
+  assert.match(malformed, /Broken option without input/);
 });
