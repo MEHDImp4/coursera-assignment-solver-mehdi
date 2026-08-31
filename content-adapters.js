@@ -6,27 +6,41 @@
   const courseraApi = globalThis.CourseraApiKit;
   const courseStateKit = globalThis.CourseraStateKit;
   const monaco = globalThis.MonacoBridgeKit;
+  const readMessageRouter = globalThis.CourseraReadMessageRouterKit;
 
-  if (!requirements || !parser || !courseraApi || !courseStateKit || !monaco) {
+  if (!requirements || !parser || !courseraApi || !courseStateKit || !monaco || !readMessageRouter) {
     console.warn("Coursera content modules were not loaded; read runtime is unavailable.");
     return;
   }
 
   const courseState = courseStateKit.createCourseState();
   const monacoClient = monaco.createBridgeClient(window, { timeoutMs: 2600 });
+  let lastLocationHref = "";
 
   function currentCourseSlug() {
-    return courseraApi.courseSlugFromPath(window.location.pathname);
+    return courseStateKit.courseSlugFromUrl(window.location.href);
+  }
+
+  function syncCourseLocation(force = false) {
+    const href = String(window.location.href || "");
+    if (!force && href === lastLocationHref) return false;
+    lastLocationHref = href;
+    courseState.syncLocation(href);
+    return true;
   }
 
   function seedCourseStateFromLegacyCache() {
-    const slug = capturedCourseId || currentCourseSlug();
-    if (slug) courseState.setCourseSlug(slug);
-    if (slug && courseraApi.hasSupportedCourseMaterials(capturedCourseMaterials)) {
+    syncCourseLocation(true);
+    const slug = currentCourseSlug();
+    if (
+      slug &&
+      capturedCourseId === slug &&
+      courseraApi.hasSupportedCourseMaterials(capturedCourseMaterials)
+    ) {
       try {
         courseState.setCourseMaterials(capturedCourseMaterials, slug);
       } catch {
-        // The legacy cache remains available if it cannot be migrated safely.
+        // Ignore stale or unsupported legacy cache entries.
       }
     }
   }
@@ -37,12 +51,19 @@
     if (event.source !== window) return;
     courseState.ingestInterceptMessage(event.data);
   });
+  window.addEventListener("popstate", () => syncCourseLocation(true));
+  window.addEventListener("hashchange", () => syncCourseLocation(true));
+
+  if (typeof MutationObserver === "function" && document.documentElement) {
+    const locationObserver = new MutationObserver(() => syncCourseLocation(false));
+    locationObserver.observe(document.documentElement, { childList: true, subtree: true });
+  }
 
   async function loadCourseMaterials() {
+    syncCourseLocation(true);
     const courseSlug = currentCourseSlug();
     if (!courseSlug) throw new Error("Open a Coursera course page first.");
 
-    courseState.setCourseSlug(courseSlug);
     const modularCache = courseState.getCourseMaterials(courseSlug);
     if (modularCache) return modularCache;
 
@@ -68,6 +89,13 @@
     capturedCourseMaterials = materials;
     capturedCourseId = courseSlug;
     return materials;
+  }
+
+  async function getCourseRequirements() {
+    const courseSlug = currentCourseSlug();
+    if (!courseSlug) throw new Error("Open a Coursera course page first.");
+    const materials = await loadCourseMaterials();
+    return requirements.normalizeCourseRequirements(materials, courseSlug);
   }
 
   async function scrapeAssessmentDetailed() {
@@ -114,45 +142,43 @@
     return { questions, issues };
   }
 
-  // content.js owns orchestration and mutation paths. Read-only helpers delegate here.
-  globalThis.CourseraReadRuntime = Object.freeze({
+  function moduleSnapshot() {
+    return {
+      requirements: "course-requirements.js",
+      assessmentParser: "assessment-parser.js",
+      courseraApi: "coursera-api.js",
+      courseState: "coursera-state.js",
+      monacoBridge: "monaco-bridge.js",
+      presentation: "presentation.js",
+      readMessageRouter: "read-message-router.js",
+      mode: "progressive-extraction"
+    };
+  }
+
+  function getParserDiagnostics() {
+    syncCourseLocation(false);
+    return {
+      selectors: parser.selectorDiagnostics(document),
+      state: courseState.snapshot(),
+      modules: moduleSnapshot()
+    };
+  }
+
+  // content.js owns mutation paths. Read-only parsing/state/messaging delegate here.
+  const readRuntime = Object.freeze({
     getCurrentCourseSlug: currentCourseSlug,
     loadCourseMaterials,
+    getCourseRequirements,
     normalizeCourseRequirements: requirements.normalizeCourseRequirements,
     assessmentQuestionBlocks() {
       return parser.assessmentQuestionBlocks(document);
     },
     codeEditorDescriptor: monaco.describeCodeEditor,
-    scrapeAssessmentDetailed
+    scrapeAssessmentDetailed,
+    getParserDiagnostics
   });
 
-  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-    if (request.action !== "getParserDiagnostics") return false;
-    sendResponse({
-      data: {
-        selectors: parser.selectorDiagnostics(document),
-        state: courseState.snapshot(),
-        modules: {
-          requirements: "course-requirements.js",
-          assessmentParser: "assessment-parser.js",
-          courseraApi: "coursera-api.js",
-          courseState: "coursera-state.js",
-          monacoBridge: "monaco-bridge.js",
-          presentation: "presentation.js",
-          mode: "progressive-extraction"
-        }
-      }
-    });
-    return false;
-  });
-
-  globalThis.CourseraContentModules = Object.freeze({
-    requirements: "course-requirements.js",
-    assessmentParser: "assessment-parser.js",
-    courseraApi: "coursera-api.js",
-    courseState: "coursera-state.js",
-    monacoBridge: "monaco-bridge.js",
-    presentation: "presentation.js",
-    mode: "progressive-extraction"
-  });
+  globalThis.CourseraReadRuntime = readRuntime;
+  chrome.runtime.onMessage.addListener(readMessageRouter.createReadMessageListener(readRuntime));
+  globalThis.CourseraContentModules = Object.freeze(moduleSnapshot());
 })();
