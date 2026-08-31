@@ -53,11 +53,11 @@ test("read message router is limited to read-only actions", () => {
   assert.match(source, /getParserDiagnostics/);
 });
 
-test("Monaco module keeps transport isolated from Chrome APIs", () => {
+test("Monaco module is a read-only transport isolated from Chrome APIs", () => {
   const source = fs.readFileSync(path.join(root, "monaco-bridge.js"), "utf8");
   assert.doesNotMatch(source, /chrome\.runtime|chrome\.tabs|execCommand/);
   assert.match(source, /read-model/);
-  assert.match(source, /replace-model/);
+  assert.doesNotMatch(source, /replace-model/);
 });
 
 test("presentation module owns banner DOM work without HTML injection", () => {
