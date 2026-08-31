@@ -21,47 +21,71 @@
 - Added cache invalidation when the active course slug changes.
 - Added sanitized state snapshots that never expose header values or learner IDs.
 - Added `monaco-bridge.js` for editor discovery, URI/action validation, and read-side bridge transport.
-- Kept the legacy Monaco write path unchanged during this phase.
+- Kept the existing Monaco write path outside the read-side refactor.
 - Added state and Monaco regression tests.
 
 ## Phase 4 — Browser read-only smoke coverage
 
 - Added a real Chrome/Chromium headless smoke harness using only sanitized local fixtures.
-- Verified semantic assessment parsing and Monaco descriptor discovery in-browser.
-- Added before/after DOM and form-control snapshots to prove the read path does not modify the fixture.
-- Added the smoke harness to the normal GitHub Actions workflow.
+- Verified assessment parsing and Monaco descriptor discovery in-browser.
+- Added before/after DOM and form-control snapshots to prove the read path does not modify fixtures.
+- Added the smoke harness to normal GitHub Actions CI.
 
 ## Phase 5 — Remove duplicated read-only legacy helpers
 
-- Replaced legacy read-only helper bodies in `content.js` with thin delegates to `CourseraReadRuntime`.
-- Removed duplicated course-material request construction, course-requirement normalization, assessment selector parsing, Monaco descriptor discovery, and detailed read scraping from `content.js`.
-- Removed 307 lines from `content.js` while adding only 13 delegate lines.
-- Added `tests/content-read-runtime-contract.test.js` so the removed legacy implementations cannot silently return.
-- Left existing mutation-oriented integration paths outside this cleanup.
+- Replaced covered read-only implementations in `content.js` with `CourseraReadRuntime` delegates.
+- Removed duplicated course-material request construction, normalization, selector parsing, Monaco descriptor discovery, and detailed read scraping.
+- Removed more than 300 legacy lines from `content.js` during the first cleanup pass.
+- Added `tests/content-read-runtime-contract.test.js` to prevent removed read-only implementations from returning.
+- Kept mutation-oriented integration outside this cleanup.
 
 ## Phase 6 — Presentation extraction
 
 - Added `presentation.js` for the in-page status banner, spinner style, accessibility attributes, and show/hide timing.
-- Replaced the banner DOM implementation in `content.js` with thin presentation-runtime delegates.
-- Switched dynamic banner messages away from `innerHTML` to safe text-node rendering.
-- Added stale-hide cancellation so a refreshed banner is not removed by an older timeout.
-- Added `tests/presentation.test.js` and `tests/content-presentation-contract.test.js`.
-- Added the presentation module to manifest load-order contracts, syntax CI, and diagnostics metadata.
-- Removed the temporary write-enabled cleanup workflow after the guarded refactor succeeded.
+- Replaced banner DOM implementation in `content.js` with thin presentation delegates.
+- Switched dynamic messages from `innerHTML` to safe text-node rendering.
+- Added stale-hide cancellation so an older timer cannot remove a refreshed banner.
+- Added presentation unit/contract coverage.
 
 ## Phase 7 — Selector resilience and malformed fixtures
 
-- Added sanitized `assessment-legacy.html`, `assessment-mixed.html`, and `assessment-malformed.html` fixtures.
-- Updated `assessment-parser.js` so semantic and legacy selector families can coexist on the same page.
-- Deduplicated blocks that match or nest across both selector families and preserved browser document order.
+- Added sanitized legacy, mixed, and malformed assessment fixtures.
+- Allowed semantic and legacy selector families to coexist on partially migrated pages.
+- Deduplicated dual-matched/nested blocks and preserved document order.
 - Filtered promptless candidates before extraction.
-- Added metadata-only diagnostics for legacy prompt counts, invalid candidates, and selected blocks.
-- Added `mixed` as an explicit selector strategy when distinct semantic and legacy questions coexist.
-- Added regression coverage for incomplete option structures falling back to supported written fields.
-- Expanded the Chrome headless smoke harness to inspect all assessment fixtures and verify every fixture remains unchanged after read-only parsing.
+- Added metadata-only invalid-candidate and selected-block diagnostics.
+- Added explicit `mixed` strategy reporting.
+- Expanded Chrome smoke coverage to all assessment fixtures with no-mutation snapshots.
 
-## Next
+## Phase 8 — SPA navigation and cache consistency
 
-- Reduce remaining integration-only state duplication without changing mutation behavior.
-- Isolate generic Chrome message routing/error serialization from feature-specific actions.
-- Add structural regression coverage for SPA navigation/course changes.
+- Extended `coursera-state.js` with `syncLocation`, `clearCourse`, `onCourseRoute`, and `courseRevision`.
+- Preserved cache on navigation within the same course.
+- Invalidated stale materials when the course slug changes.
+- Cleared active course/cache when navigation leaves `/learn/<slug>/...`.
+- Synchronized read state from initial URL, `popstate`, `hashchange`, and a read-only `MutationObserver` URL check.
+- Tightened legacy-cache seeding so materials are reused only when the captured course ID exactly matches the active route.
+- Added SPA transition regression tests.
+
+## Phase 9 — Dedicated read-only Chrome message routing
+
+- Added `read-message-router.js`.
+- Moved `getSelection`, `getCourseRequirements`, `getGradedAssignments`, and `getParserDiagnostics` out of the large legacy listener.
+- Reduced read-only failures to message-only error objects without stack traces.
+- Contract-tested the router to reject mutation-oriented actions and mutation primitives.
+- Removed now-unused course-loading/normalization helper delegates from `content.js`.
+- Left the existing mutation-oriented listener and write paths outside the refactor.
+
+## Phase 10 — Final security and repository hygiene gate
+
+- Removed the unused Manifest `scripting` permission; extension permissions are now `activeTab` and `storage`.
+- Added `tests/repo-hygiene.test.js` to reject checked-in write-enabled/temporary workflows, permission creep, content-script scope drift, and credential-like fixture data.
+- Added `read-message-router.js` to manifest load-order and syntax-CI contracts.
+- Removed the final temporary write-enabled cleanup workflow after its guarded mechanical patch passed syntax, Node tests, and Chrome smoke coverage.
+- Updated architecture documentation to record the final safe refactor boundary.
+
+## Status
+
+All planned safe refactor phases are complete in this PR. Permanent validation consists of full JavaScript syntax checks, the complete Node unit/contract/hygiene suite, and the real Chrome/Chromium read-only smoke harness.
+
+Mutation-oriented answer filling, write-side Monaco behavior, submission/completion flows, and their required legacy integration state remain intentionally outside this refactor and were not enhanced.
