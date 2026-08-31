@@ -4,30 +4,65 @@
   const requirements = globalThis.CourseRequirementsKit;
   const parser = globalThis.AssessmentParserKit;
   const courseraApi = globalThis.CourseraApiKit;
+  const courseStateKit = globalThis.CourseraStateKit;
+  const monaco = globalThis.MonacoBridgeKit;
 
-  if (!requirements || !parser || !courseraApi) {
-    console.warn("Coursera parser modules were not loaded; keeping legacy content.js implementations.");
+  if (!requirements || !parser || !courseraApi || !courseStateKit || !monaco) {
+    console.warn("Coursera content modules were not loaded; keeping legacy content.js implementations.");
     return;
   }
 
-  // Progressive extraction: content.js still owns browser messaging, mutation actions,
-  // banners, and Monaco I/O. Pure parsing/normalization/request construction lives
-  // in independently testable modules and is delegated here.
-  normalizeCourseRequirements = requirements.normalizeCourseRequirements;
-  getCurrentCourseSlug = function () {
+  const courseState = courseStateKit.createCourseState();
+  const monacoClient = monaco.createBridgeClient(window, { timeoutMs: 2600 });
+
+  function currentCourseSlug() {
     return courseraApi.courseSlugFromPath(window.location.pathname);
-  };
+  }
+
+  function seedCourseStateFromLegacyCache() {
+    const slug = capturedCourseId || currentCourseSlug();
+    if (slug) courseState.setCourseSlug(slug);
+    if (slug && courseraApi.hasSupportedCourseMaterials(capturedCourseMaterials)) {
+      try {
+        courseState.setCourseMaterials(capturedCourseMaterials, slug);
+      } catch {
+        // The legacy cache remains available if it cannot be migrated safely.
+      }
+    }
+  }
+
+  seedCourseStateFromLegacyCache();
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    courseState.ingestInterceptMessage(event.data);
+  });
+
+  // Progressive extraction: content.js still owns browser messaging, mutation actions,
+  // banners, and write-side Monaco behavior. Pure parsing, read-side editor inspection,
+  // course state, normalization, and request construction live in tested modules.
+  normalizeCourseRequirements = requirements.normalizeCourseRequirements;
+  getCurrentCourseSlug = currentCourseSlug;
+  codeEditorDescriptor = monaco.describeCodeEditor;
   assessmentQuestionBlocks = function () {
     return parser.assessmentQuestionBlocks(document);
   };
 
   loadCourseMaterials = async function () {
-    if (capturedCourseMaterials?.linked?.["onDemandCourseMaterialItems.v2"]) {
-      return capturedCourseMaterials;
-    }
-
     const courseSlug = getCurrentCourseSlug();
     if (!courseSlug) throw new Error("Open a Coursera course page first.");
+
+    courseState.setCourseSlug(courseSlug);
+    const modularCache = courseState.getCourseMaterials(courseSlug);
+    if (modularCache) return modularCache;
+
+    if (
+      capturedCourseId === courseSlug &&
+      courseraApi.hasSupportedCourseMaterials(capturedCourseMaterials)
+    ) {
+      courseState.setCourseMaterials(capturedCourseMaterials, courseSlug);
+      return capturedCourseMaterials;
+    }
 
     const response = await fetch(courseraApi.buildCourseMaterialsUrl(courseSlug), {
       credentials: "include"
@@ -39,6 +74,7 @@
       throw new Error("Coursera returned course materials in an unsupported format.");
     }
 
+    courseState.setCourseMaterials(materials, courseSlug);
     capturedCourseMaterials = materials;
     capturedCourseId = courseSlug;
     return materials;
@@ -59,8 +95,8 @@
       const question = extracted.question;
       if (extracted.kind === "code") {
         try {
-          const descriptor = codeEditorDescriptor(block);
-          const modelResponse = await requestMonacoBridge("read-model", {
+          const descriptor = monaco.describeCodeEditor(block);
+          const modelResponse = await monacoClient.request("read-model", {
             modelUri: descriptor.modelUri
           });
           const currentCode = String(modelResponse.value ?? "");
@@ -93,10 +129,13 @@
     sendResponse({
       data: {
         selectors: parser.selectorDiagnostics(document),
+        state: courseState.snapshot(),
         modules: {
           requirements: "course-requirements.js",
           assessmentParser: "assessment-parser.js",
           courseraApi: "coursera-api.js",
+          courseState: "coursera-state.js",
+          monacoBridge: "monaco-bridge.js",
           mode: "progressive-extraction"
         }
       }
@@ -108,6 +147,8 @@
     requirements: "course-requirements.js",
     assessmentParser: "assessment-parser.js",
     courseraApi: "coursera-api.js",
+    courseState: "coursera-state.js",
+    monacoBridge: "monaco-bridge.js",
     mode: "progressive-extraction"
   });
 })();
