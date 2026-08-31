@@ -1,48 +1,48 @@
 # Extension architecture
 
-This fork is moving away from a single large `content.js` file through a progressive extraction strategy. The goal is to keep runtime behavior stable while moving testable responsibilities into focused modules.
+This fork uses progressive extraction: testable read-only, diagnostic, state, selector, and presentation responsibilities are isolated from the original integration-heavy `content.js` without expanding live assessment automation behavior.
 
 ## Runtime layers
 
-### Pure modules
+### Pure/read-side modules
 
-- `course-requirements.js` — normalizes Coursera course-material metadata into a stable list of grade-relevant activities.
-- `assessment-parser.js` — owns assessment DOM selectors, question-block discovery, option extraction, and question-type classification. It supports semantic, legacy, and mixed selector layouts, filters promptless candidates, and deduplicates blocks that match both selector families.
-- `coursera-api.js` — builds and validates course-material API requests and course slugs.
-- `coursera-state.js` — keeps read-side course state and materials cache scoped to the active course. Diagnostics expose only header names and boolean context flags, never token/header values or learner IDs.
-- `diagnostics.js` — converts parser results into metadata-only read-only reports.
-- `intercept-policy.js` — defines which Coursera traffic and headers are safe to expose to the isolated extension world.
+- `course-requirements.js` — normalizes course-material metadata into a stable list of grade-relevant activities.
+- `assessment-parser.js` — owns assessment selectors, question-block discovery, option extraction, and question-type classification. It supports semantic, legacy, mixed, and malformed layouts.
+- `coursera-api.js` — builds and validates course-material requests and course slugs.
+- `coursera-state.js` — owns course-scoped read state and materials caching. It tracks SPA route revisions without exposing token/header values or learner IDs.
+- `diagnostics.js` — builds metadata-only Dry Run reports.
+- `intercept-policy.js` — constrains which Coursera traffic and request-header names may cross from the MAIN world.
+- `read-message-router.js` — handles only read-only Chrome actions and serializes failures to message-only error objects.
 
-These modules are written so they can be loaded in the browser and required directly by Node tests.
+These modules can be required directly by Node tests where browser APIs are not needed.
 
 ### Monaco bridge
 
-- `monaco-bridge.js` — identifies the editable Monaco model, validates model URIs/actions, and provides the window-message transport used for read-side editor inspection.
-- The read runtime uses this module for editor detection and **read-model** requests.
-- The legacy write path remains in `content.js` for now to avoid changing mutation behavior during this refactor.
+- `monaco-bridge.js` identifies the editable model, validates model URIs/actions, and provides the window-message transport used by read-side editor inspection.
+- The modular read runtime uses only `read-model`.
+- Existing write-side Monaco behavior remains in the legacy integration boundary and was not expanded by this refactor.
 
 ### Presentation
 
-- `presentation.js` — owns the in-page status banner, spinner style, hide/show timing, and accessibility attributes.
-- Dynamic banner messages are rendered with `textContent`/text nodes instead of `innerHTML`, so message strings cannot be interpreted as injected markup.
-- A pending hide timer is cancelled when a banner is refreshed, preventing an older timeout from removing a newer status message.
-- `content.js` keeps only thin `showOrUpdateBanner` / `hideBanner` delegates to `globalThis.CourseraPresentation`.
+- `presentation.js` owns the in-page status banner, spinner style, show/hide timing, and accessibility attributes.
+- Dynamic messages use text nodes / `textContent`, not `innerHTML`.
+- Refreshing a banner cancels an older hide timer so stale timers cannot remove a newer status.
 
 ### Browser integration
 
-- `content.js` — orchestration/integration layer. Covered read-only and presentation helpers are thin delegates; Chrome message routing, mutation actions, write-side Monaco behavior, completion flows, and remaining integration logic stay here.
-- `content-adapters.js` — creates `globalThis.CourseraReadRuntime` and owns the modular read path for parsing, course metadata normalization, course-scoped cache, course-material requests, and Monaco read inspection.
-- `intercept.js` — MAIN-world network hook, constrained by `intercept-policy.js`.
+- `content-adapters.js` creates `globalThis.CourseraReadRuntime`, owns modular course reads/parsing/diagnostics, synchronizes SPA route state, and registers the dedicated read-only message router.
+- `content.js` retains the existing mutation-oriented integration boundary plus only the read delegates still required by that legacy code.
+- `intercept.js` is the MAIN-world network hook and is constrained by `intercept-policy.js`.
 
 ### Popup
 
-- `popup.js` — existing popup actions and provider configuration.
-- `dry-run.js` — read-only assessment diagnostics UI.
-- `diagnostics.js` — sanitizes the information shown/exported by Dry Run.
+- `popup.js` contains the existing popup/provider behavior.
+- `dry-run.js` provides the read-only diagnostics action.
+- `diagnostics.js` sanitizes Dry Run output.
 
 ## Content-script load order
 
-The isolated-world scripts intentionally load in this order:
+The isolated-world scripts load in this order:
 
 1. `course-requirements.js`
 2. `assessment-parser.js`
@@ -50,149 +50,120 @@ The isolated-world scripts intentionally load in this order:
 4. `coursera-state.js`
 5. `monaco-bridge.js`
 6. `presentation.js`
-7. `content.js`
-8. `content-adapters.js`
+7. `read-message-router.js`
+8. `content.js`
+9. `content-adapters.js`
 
-The extracted modules load before the integration layer. `presentation.js` exposes the banner presenter before `content.js` executes, while `content-adapters.js` exposes the stable `CourseraReadRuntime` object used by the read-only delegates.
+`intercept-policy.js` and `intercept.js` run separately in the MAIN world at `document_start`.
 
-## Course-scoped cache
+## SPA navigation and course-scoped state
 
-The legacy `capturedCourseMaterials` variable is global to the content-script lifetime. Coursera can navigate between course routes without a full tab reload, so reusing that cache without checking the active course can return stale materials.
+Coursera can move between `/learn/<slug>/...` routes without reloading the tab. A cache tied only to the content-script lifetime can therefore become stale.
 
-`coursera-state.js` associates cached materials with a `courseSlug`. Changing the active slug invalidates a mismatched cache. The adapter keeps the legacy variables synchronized after a fresh fetch so existing integration code continues to function.
+`coursera-state.js` now provides:
 
-The modular state snapshot is deliberately metadata-only:
+- `syncLocation(url)` to derive the current course from navigation;
+- `clearCourse()` when navigation leaves a course route;
+- `courseRevision`, incremented only when the course context changes;
+- cache invalidation when the active slug changes;
+- `onCourseRoute` and `hasCourseMaterials` metadata in diagnostics.
 
-- current course slug;
-- whether course materials are cached;
-- names of observed allowlisted CSRF/request headers;
-- whether a user-context response was observed.
+`content-adapters.js` synchronizes state on initial load, `popstate`, `hashchange`, and DOM changes observed through `MutationObserver`. The observer performs only URL/state comparison; it does not modify the page.
 
-It never returns header values, cookies, authorization data, CSRF values, or learner IDs.
+Legacy cached materials are imported into the modular state only when their captured course ID exactly matches the current route slug.
 
-## Read-runtime cleanup
+The state snapshot never returns cookies, authorization data, CSRF/header values, or learner IDs.
 
-After browser smoke coverage was established, the duplicated read-only implementations were removed from `content.js`.
+## Read-only message boundary
 
-`content.js` now keeps only small delegates for:
+Read-only Chrome actions are no longer implemented inside the large legacy message listener.
 
-- current course slug lookup;
-- course-material loading;
-- course-requirement normalization;
-- assessment block discovery;
-- Monaco editor description;
-- detailed read-only assessment scraping.
+`read-message-router.js` owns exactly these read actions:
 
-The implementation for those responsibilities lives in `CourseraReadRuntime`, backed by the extracted modules. This removed more than 300 legacy lines from `content.js` without modifying the existing mutation-oriented paths.
+- `getSelection`;
+- `getCourseRequirements`;
+- `getGradedAssignments` (compatibility alias);
+- `getParserDiagnostics`.
 
-`tests/content-read-runtime-contract.test.js` prevents the removed legacy helper bodies from being reintroduced and verifies that the adapter exposes a stable runtime object instead of reassigning legacy globals.
+Unknown actions are ignored by this router. Mutation-oriented action names and DOM mutation primitives are contract-tested to stay out of the module. Errors are reduced to `{ error: message }` and do not include stack traces.
 
-## Presentation cleanup
-
-The original banner implementation created and styled its DOM directly inside `content.js`. That implementation has now been removed and replaced with delegates to `presentation.js`.
-
-The presentation module is covered by unit tests for:
-
-- info/success/error banner descriptors;
-- safe literal rendering of strings that contain HTML-like markup;
-- single spinner-style registration;
-- cancellation of stale hide timers;
-- absence of Chrome API dependencies and `innerHTML` usage.
-
-`tests/content-presentation-contract.test.js` prevents the old banner DOM implementation from returning to `content.js`.
+The course-loading/normalization helper delegates that existed only to support those read messages were also removed from `content.js`. Assessment/Monaco read delegates still referenced by existing legacy integration remain thin wrappers around `CourseraReadRuntime`.
 
 ## Selector resilience
 
-`assessment-parser.js` no longer treats semantic and legacy selectors as mutually exclusive for the whole page. It now:
+`assessment-parser.js` supports partially migrated pages instead of assuming the whole page is either semantic or legacy. It:
 
-- accepts semantic blocks that contain a valid prompt;
-- accepts legacy blocks that contain a valid prompt;
-- combines distinct semantic and legacy questions on partially migrated pages;
+- accepts semantic and legacy blocks with valid prompts;
+- combines distinct questions from both families;
 - removes dual-matched or nested duplicates;
-- preserves document order where browser DOM ordering is available;
-- filters candidates that have no prompt before extraction;
-- reports `semanticCandidates`, `semanticPrompts`, `legacyCandidates`, `legacyPrompts`, `invalidCandidates`, and `selectedBlocks` in metadata-only selector diagnostics.
+- preserves DOM order where available;
+- filters promptless candidates before extraction;
+- safely handles incomplete option structures;
+- reports `semanticCandidates`, `semanticPrompts`, `legacyCandidates`, `legacyPrompts`, `invalidCandidates`, and `selectedBlocks`.
 
-The strategy is reported as `semantic`, `legacy`, `mixed`, or `none`.
+Selector strategy is reported as `semantic`, `legacy`, `mixed`, or `none`.
 
-## Why progressive extraction?
+## Fixtures and browser smoke coverage
 
-`content.js` mixes network state, course parsing, assessment parsing, Monaco integration, UI feedback, and mutation behavior. Rewriting it wholesale would create a large regression surface. Progressive extraction lets each responsibility gain fixtures and tests first, then removes duplicated implementations only after the replacement path is covered.
+Sanitized fixtures under `tests/fixtures/` contain synthetic structure only:
 
-## Fixtures
+- `course-materials-confirmed.json`;
+- `assessment-basic.html`;
+- `assessment-legacy.html`;
+- `assessment-mixed.html`;
+- `assessment-malformed.html`.
 
-Sanitized regression fixtures live under `tests/fixtures/`.
+They must never contain cookies, authorization headers, CSRF values, real learner IDs, real assessment answers, or copied private course content.
 
-- `course-materials-confirmed.json` represents a small course-material response with confirmed passable metadata.
-- `assessment-basic.html` covers the normal semantic structure and common assessment types.
-- `assessment-legacy.html` covers the legacy block selectors without semantic block attributes.
-- `assessment-mixed.html` covers a dual-matched block plus a distinct legacy-only block so deduplication and mixed selection are exercised.
-- `assessment-malformed.html` covers promptless candidates and an incomplete option structure that must safely fall back to a supported text field.
+`tests/browser/read-only-smoke.html` runs the parser/Monaco read inspection in real Chrome/Chromium against the sanitized assessment fixtures. `tests/browser/run-smoke.sh` serves the repository only on `127.0.0.1`.
 
-Fixtures contain only synthetic text and structural markers. They must never contain cookies, authorization headers, CSRF values, real learner IDs, real assessment answers, or copied private course content.
+The browser smoke suite verifies expected semantic/legacy/mixed/malformed behavior and snapshots every fixture before/after inspection. CI fails if read-side inspection changes the DOM or form-control state.
 
-## Browser smoke harness
+## Security and repository hygiene
 
-`tests/browser/read-only-smoke.html` runs the extracted parser and Monaco descriptor code in a real browser against all sanitized assessment fixtures. `tests/browser/run-smoke.sh` serves the repository only on `127.0.0.1` and launches the Chrome/Chromium binary already available on the CI runner.
+The permanent GitHub Actions workflow has `contents: read` only. Temporary write-enabled mechanical cleanup workflows are removed after use.
 
-The smoke harness asserts that:
+`tests/repo-hygiene.test.js` permanently enforces that:
 
-- the normal semantic fixture still exposes the four expected question types;
-- the legacy fixture selects the legacy strategy and extracts supported questions;
-- the mixed fixture selects both distinct semantic and legacy questions without duplicating a block that matches both families;
-- the malformed fixture ignores promptless candidates and safely classifies the recoverable text question;
-- selector candidate/invalid counts match expectations;
-- the Monaco model URI and language are discovered correctly on the basic fixture;
-- every fixture DOM and form-control state is byte-for-byte equivalent before and after read-side inspection.
+- no checked-in workflow grants `contents: write`;
+- no temporary/one-shot cleanup workflow remains;
+- the manifest keeps only the currently required extension permissions (`activeTab`, `storage`);
+- the unused `scripting` permission does not return;
+- content scripts remain scoped to Coursera learning routes;
+- sanitized fixtures do not contain credential-like material.
 
-The harness has no network dependency on Coursera, no AI-provider calls, and no Chrome-extension messaging.
+Interception remains restricted by `intercept-policy.js`; request bodies and unrelated sensitive headers are not forwarded to the isolated world.
 
 ## Test strategy
 
-The GitHub Actions workflow runs:
+Normal CI runs:
 
-- `node --check` against extension JavaScript files, including the extracted state, Monaco, and presentation modules;
-- unit tests for provider request construction;
-- unit tests for course requirements normalization;
-- unit tests for assessment classification, semantic/legacy/mixed selector strategy, malformed candidates, and option fallback;
-- course-state/cache isolation tests;
-- Monaco bridge validation/transport tests;
-- presentation rendering/timer tests;
-- interception-policy tests;
-- Dry Run diagnostics tests;
-- popup/manifest/module-load contracts;
-- read-runtime and presentation cleanup contracts;
-- a real headless-browser smoke test against all sanitized assessment fixtures.
+- `node --check` across extension JavaScript, including every extracted module;
+- all `node:test` unit/contract/hygiene suites;
+- the real Chrome/Chromium read-only smoke harness.
 
-## Current migration status
+Coverage includes providers, course requirements, selector parsing, malformed fixtures, SPA state/cache transitions, Monaco read transport, presentation safety/timers, interception policy, diagnostics, manifest/module order, read-runtime cleanup, read-message routing, repository hygiene, and browser-level no-mutation checks.
 
-Extracted, delegated, and covered by tests:
+## Final safe refactor boundary
 
-- course-requirement normalization;
-- assessment selector strategy and question-shell parsing;
-- semantic/legacy/mixed selector fallback and malformed-structure handling;
-- course-material API URL/response helpers;
-- read-side course state and course-scoped materials cache;
-- Monaco editor detection and read-side bridge transport;
-- in-page banner presentation;
-- interception minimization policy;
-- read-only diagnostics;
-- browser-level fixture verification with unchanged DOM/control state.
+Completed and covered:
 
-Still intentionally legacy:
+- Dry Run diagnostics and metadata sanitization;
+- interception minimization;
+- course-requirement, API, assessment, state, and Monaco read extraction;
+- course-scoped cache and SPA navigation consistency;
+- semantic/legacy/mixed/malformed selector resilience;
+- presentation extraction and safe text rendering;
+- dedicated read-only Chrome message routing;
+- duplicate read-only cleanup from `content.js`;
+- manifest permission reduction;
+- permanent CI, fixture, browser, and repository-hygiene gates.
 
-- Chrome message routing;
-- write-side Monaco application path;
-- course completion/media mutation flows;
-- other mutation-oriented integration code.
+Intentionally left in the legacy boundary:
 
-## Next extraction candidates
+- existing write-side Monaco application;
+- existing answer-filling / assessment mutation flows;
+- existing course-completion/media mutation flows;
+- other mutation-oriented integration state required by those legacy paths.
 
-The next safe refactors are:
-
-1. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
-2. isolate generic Chrome message routing/error serialization from feature-specific actions;
-3. add structural regression coverage for navigation/course changes where a full page reload does not occur;
-4. continue shrinking `content.js` without expanding live assessment automation behavior.
-
-Automatic assessment submission is intentionally outside the scope of this architecture work.
+Those mutation-oriented areas were deliberately not enhanced or further optimized in this PR. The safe refactor scope is complete.
