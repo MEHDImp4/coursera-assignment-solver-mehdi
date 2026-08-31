@@ -5,6 +5,7 @@ const {
   formatDryRunSummary,
   summarizeIssue,
   summarizeQuestion,
+  summarizeCourseState,
   summarizeParserDiagnostics
 } = require("../diagnostics.js");
 
@@ -63,14 +64,48 @@ test("sanitizes parser issue details", () => {
   });
 });
 
-test("sanitizes parser module and selector diagnostics", () => {
+test("sanitizes course state without exporting course slugs or header values", () => {
+  const summary = summarizeCourseState({
+    courseSlug: "private-course-slug",
+    onCourseRoute: true,
+    courseRevision: 3,
+    hasCourseMaterials: true,
+    observedHeaderNames: ["X-CSRF3-Token", "Authorization", "x-requested-with"],
+    hasUserContext: true,
+    token: "secret"
+  });
+
+  assert.deepEqual(summary, {
+    onCourseRoute: true,
+    courseRevision: 3,
+    hasCourseMaterials: true,
+    observedHeaderNames: ["x-csrf3-token", "x-requested-with"],
+    hasUserContext: true
+  });
+  const serialized = JSON.stringify(summary);
+  assert.equal(serialized.includes("private-course-slug"), false);
+  assert.equal(serialized.includes("secret"), false);
+});
+
+test("sanitizes mixed parser module, selector, and state diagnostics", () => {
   assert.deepEqual(summarizeParserDiagnostics({
     selectors: {
-      strategy: "semantic",
+      strategy: "mixed",
       semanticCandidates: 5,
       semanticPrompts: 4,
       legacyCandidates: 2,
+      legacyPrompts: 2,
+      invalidCandidates: 1,
+      selectedBlocks: 6,
       rawHtml: "private"
+    },
+    state: {
+      courseSlug: "do-not-export",
+      onCourseRoute: true,
+      courseRevision: 2,
+      hasCourseMaterials: false,
+      observedHeaderNames: ["x-csrf2-token"],
+      hasUserContext: true
     },
     modules: {
       assessmentParser: "assessment-parser.js",
@@ -78,10 +113,20 @@ test("sanitizes parser module and selector diagnostics", () => {
     },
     token: "secret"
   }), {
-    selectorStrategy: "semantic",
+    selectorStrategy: "mixed",
     semanticCandidates: 5,
     semanticPrompts: 4,
     legacyCandidates: 2,
+    legacyPrompts: 2,
+    invalidCandidates: 1,
+    selectedBlocks: 6,
+    state: {
+      onCourseRoute: true,
+      courseRevision: 2,
+      hasCourseMaterials: false,
+      observedHeaderNames: ["x-csrf2-token"],
+      hasUserContext: true
+    },
     modules: {
       assessmentParser: "assessment-parser.js",
       courseraApi: "coursera-api.js"
@@ -91,11 +136,22 @@ test("sanitizes parser module and selector diagnostics", () => {
 
 test("attaches sanitized parser diagnostics to dry-run reports", () => {
   const report = buildDryRunReport([], [], {
-    selectors: { strategy: "legacy", legacyCandidates: 3 },
+    selectors: {
+      strategy: "legacy",
+      legacyCandidates: 3,
+      legacyPrompts: 2,
+      invalidCandidates: 1,
+      selectedBlocks: 2
+    },
+    state: { onCourseRoute: true, courseRevision: 1 },
     modules: { mode: "progressive-extraction" }
   });
   assert.equal(report.parser.selectorStrategy, "legacy");
   assert.equal(report.parser.legacyCandidates, 3);
+  assert.equal(report.parser.legacyPrompts, 2);
+  assert.equal(report.parser.invalidCandidates, 1);
+  assert.equal(report.parser.selectedBlocks, 2);
+  assert.equal(report.parser.state.onCourseRoute, true);
   assert.equal(report.parser.modules.mode, "progressive-extraction");
 });
 
