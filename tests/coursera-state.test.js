@@ -25,6 +25,10 @@ test("extracts course slugs from API query strings and course paths", () => {
     courseSlugFromUrl("https://www.coursera.org/learn/data%20science/home/week/1"),
     "data science"
   );
+  assert.equal(
+    courseSlugFromUrl("https://www.coursera.org/learn/course-a/home?slug=background-course"),
+    "course-a"
+  );
   assert.equal(courseSlugFromUrl("https://www.coursera.org/api/me.v1"), "");
 });
 
@@ -37,6 +41,10 @@ test("records only allowlisted observed header names, never values", () => {
       ["X-Requested-With", "XMLHttpRequest"]
     ]).sort(),
     ["x-csrf3-token", "x-requested-with"]
+  );
+  assert.deepEqual(
+    normalizeHeaderNames(["X-CSRF2-Token", "Authorization", "X-Requested-With"]).sort(),
+    ["x-csrf2-token", "x-requested-with"]
   );
 });
 
@@ -85,10 +93,8 @@ test("ingests sanitized interceptor messages without exposing account or header 
     source: INTERCEPT_SOURCE,
     request: {
       url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?q=slug&slug=course-a",
-      headers: [
-        ["x-csrf3-token", "super-secret-token"],
-        ["authorization", "Bearer private"]
-      ]
+      headerNames: ["x-csrf3-token", "authorization"],
+      headers: [["x-csrf3-token", "super-secret-token"]]
     },
     response: {
       ...materials("item-1"),
@@ -118,6 +124,46 @@ test("ingests sanitized interceptor messages without exposing account or header 
   });
   assert.equal(serialized.includes("super-secret-token"), false);
   assert.equal(serialized.includes("123456"), false);
+});
+
+test("active page route wins over intercepted background-course traffic", () => {
+  const state = createCourseState();
+  state.syncLocation("https://www.coursera.org/learn/course-a/home");
+  state.setCourseMaterials(materials("item-a"), "course-a");
+  const revision = state.snapshot().courseRevision;
+
+  const payload = {
+    source: INTERCEPT_SOURCE,
+    request: {
+      url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-b",
+      headerNames: ["x-requested-with"]
+    },
+    response: materials("item-b")
+  };
+
+  assert.equal(
+    state.ingestInterceptMessage(payload, "https://www.coursera.org/learn/course-a/quiz/checkpoint"),
+    true
+  );
+  assert.equal(state.snapshot().courseSlug, "course-a");
+  assert.equal(state.snapshot().courseRevision, revision);
+  assert.equal(state.getCourseMaterials("course-a").linked["onDemandCourseMaterialItems.v2"][0].id, "item-a");
+  assert.equal(state.getCourseMaterials("course-b"), null);
+});
+
+test("active off-course location prevents intercepted traffic from recreating course state", () => {
+  const state = createCourseState();
+  state.syncLocation("https://www.coursera.org/learn/course-a/home");
+
+  state.ingestInterceptMessage({
+    source: INTERCEPT_SOURCE,
+    request: { url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-b" },
+    response: materials("item-b")
+  }, "https://www.coursera.org/account-settings");
+
+  assert.equal(state.snapshot().courseSlug, "");
+  assert.equal(state.snapshot().onCourseRoute, false);
+  assert.equal(state.snapshot().hasCourseMaterials, false);
 });
 
 test("ignores unrelated window messages", () => {
