@@ -55,6 +55,19 @@ test("normalizes confirmed course requirements from a sanitized fixture", () => 
   assert.match(exam.link, /\/learn\/sample-course\/exam\/exam-1\/module-assessment$/);
 });
 
+test("encodes course and item slugs exactly once", () => {
+  const encodedFixture = structuredClone(fixture);
+  encodedFixture.linked["onDemandCourseMaterialItems.v2"][0].slug = "checkpoint one/α";
+  const result = normalizeCourseRequirements(encodedFixture, "sample course");
+  const quiz = result.requirements.find((item) => item.id === "quiz-1");
+
+  assert.equal(
+    quiz.link,
+    "https://www.coursera.org/learn/sample%20course/quiz/quiz-1/checkpoint%20one%2F%CE%B1"
+  );
+  assert.equal(quiz.link.includes("%252F"), false);
+});
+
 test("falls back to grade-relevant item types when passable metadata is absent", () => {
   const materials = {
     elements: [{ moduleIds: ["module"] }],
