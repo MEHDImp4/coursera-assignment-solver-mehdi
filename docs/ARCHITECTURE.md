@@ -11,7 +11,7 @@ This fork uses progressive extraction: testable read-only, diagnostic, state, se
 - `coursera-api.js` — builds and validates course-material requests and course slugs.
 - `coursera-state.js` — owns course-scoped read state and materials caching. It tracks SPA route revisions without exposing token/header values or learner IDs.
 - `diagnostics.js` — builds metadata-only Dry Run reports.
-- `intercept-policy.js` — constrains which Coursera traffic and request-header names may cross from the MAIN world.
+- `intercept-policy.js` — constrains which Coursera traffic, URL metadata, response fields, and request-header information may cross from the MAIN world.
 - `read-message-router.js` — handles only read-only Chrome actions and serializes failures to message-only error objects.
 
 These modules can be required directly by Node tests where browser APIs are not needed.
@@ -19,19 +19,23 @@ These modules can be required directly by Node tests where browser APIs are not 
 ### Monaco bridge
 
 - `monaco-bridge.js` identifies the editable model, validates model URIs/actions, and provides the window-message transport used by read-side editor inspection.
-- The modular read runtime uses only `read-model`.
-- Existing write-side Monaco behavior remains in the legacy integration boundary and was not expanded by this refactor.
+- The modular bridge accepts `read-model` only; write actions such as `replace-model` are rejected by contract.
+- Modular bridge responses must come from the exact current page origin.
+- Existing write-side Monaco behavior remains isolated in the legacy `content.js` integration boundary and was not expanded by this refactor.
 
 ### Presentation
 
 - `presentation.js` owns the in-page status banner, spinner style, show/hide timing, and accessibility attributes.
 - Dynamic messages use text nodes / `textContent`, not `innerHTML`.
 - Refreshing a banner cancels an older hide timer so stale timers cannot remove a newer status.
+- `dry-run.js` also uses DOM/text APIs instead of `innerHTML` for its audited loading/result path.
 
 ### Browser integration
 
 - `content-adapters.js` creates `globalThis.CourseraReadRuntime`, owns modular course reads/parsing/diagnostics, synchronizes SPA route state, and registers the dedicated read-only message router.
 - `content.js` retains the existing mutation-oriented integration boundary plus only the read delegates still required by that legacy code.
+- The legacy message listener explicitly returns `false` for actions it does not own so it does not claim read-only messages handled by the dedicated router.
+- Legacy window-message listeners validate `event.origin`, and the legacy Monaco request bridge targets `window.location.origin` instead of `*`.
 - `intercept.js` is the MAIN-world network hook and is constrained by `intercept-policy.js`.
 
 ### Popup
@@ -60,7 +64,7 @@ The isolated-world scripts load in this order:
 
 Coursera can move between `/learn/<slug>/...` routes without reloading the tab. A cache tied only to the content-script lifetime can therefore become stale.
 
-`coursera-state.js` now provides:
+`coursera-state.js` provides:
 
 - `syncLocation(url)` to derive the current course from navigation;
 - `clearCourse()` when navigation leaves a course route;
@@ -68,11 +72,13 @@ Coursera can move between `/learn/<slug>/...` routes without reloading the tab. 
 - cache invalidation when the active slug changes;
 - `onCourseRoute` and `hasCourseMaterials` metadata in diagnostics.
 
-`content-adapters.js` synchronizes state on initial load, `popstate`, `hashchange`, and DOM changes observed through `MutationObserver`. The observer performs only URL/state comparison; it does not modify the page.
+The active `/learn/<course>` route is authoritative. Intercepted API traffic may carry `slug` values for background/preloaded courses, but those values cannot replace the active route or populate its cache unless they match it.
+
+`content-adapters.js` synchronizes state on initial load, `popstate`, `hashchange`, and DOM changes observed through `MutationObserver`. The observer performs only URL/state comparison; it does not modify the page. A course-material fetch is also discarded if the user navigates to another course before its response completes.
 
 Legacy cached materials are imported into the modular state only when their captured course ID exactly matches the current route slug.
 
-The state snapshot never returns cookies, authorization data, CSRF/header values, or learner IDs.
+The state snapshot never returns cookies, authorization data, CSRF/header values, or learner IDs. Dry Run sanitization omits the course slug as well and exposes only route/cache/revision/header-name/user-context metadata.
 
 ## Read-only message boundary
 
@@ -98,10 +104,27 @@ The course-loading/normalization helper delegates that existed only to support t
 - removes dual-matched or nested duplicates;
 - preserves DOM order where available;
 - filters promptless candidates before extraction;
+- counts a dual-matched invalid element only once;
 - safely handles incomplete option structures;
+- restricts written fields to explicit text/untyped inputs, supported textareas, and Slate editors rather than broad non-radio inputs;
 - reports `semanticCandidates`, `semanticPrompts`, `legacyCandidates`, `legacyPrompts`, `invalidCandidates`, and `selectedBlocks`.
 
-Selector strategy is reported as `semantic`, `legacy`, `mixed`, or `none`.
+Selector strategy is reported as `semantic`, `legacy`, `mixed`, or `none`, and the sanitizer preserves all four strategies.
+
+## Interception and data minimization
+
+The MAIN-world interceptor is intentionally narrower than the raw page network stream:
+
+- only Coursera `/api/` URLs are eligible;
+- forwarded URLs retain only `slug` and `userId` query parameters required by existing integration;
+- request bodies are never forwarded through the window-message bridge;
+- allowlisted CSRF/request headers are exposed as names for diagnostics;
+- only the `x-csrf3-token` value may cross because the existing legacy media-completion flow still requires it;
+- Authorization, Cookie, CSRF2, framework-CSRF, and `x-requested-with` values are not forwarded;
+- dispatcher responses are reduced to the learner identifier where legacy integration needs it;
+- course-material responses are field-minimized to module/lesson/item/passable metadata consumed by the read-only requirements runtime.
+
+The exact page origin is used for `postMessage` and checked on receiving window-message boundaries.
 
 ## Fixtures and browser smoke coverage
 
@@ -121,18 +144,18 @@ The browser smoke suite verifies expected semantic/legacy/mixed/malformed behavi
 
 ## Security and repository hygiene
 
-The permanent GitHub Actions workflow has `contents: read` only. Temporary write-enabled mechanical cleanup workflows are removed after use.
+The permanent GitHub Actions workflow has read-only repository access. Temporary write-enabled mechanical workflows are deleted immediately after guarded one-shot use and are not allowed in the final branch state.
 
 `tests/repo-hygiene.test.js` permanently enforces that:
 
 - no checked-in workflow grants `contents: write`;
 - no temporary/one-shot cleanup workflow remains;
-- the manifest keeps only the currently required extension permissions (`activeTab`, `storage`);
-- the unused `scripting` permission does not return;
+- the manifest keeps only the currently required extension permission (`storage`);
+- `activeTab` and `scripting` do not return without an explicit contract change;
 - content scripts remain scoped to Coursera learning routes;
 - sanitized fixtures do not contain credential-like material.
 
-Interception remains restricted by `intercept-policy.js`; request bodies and unrelated sensitive headers are not forwarded to the isolated world.
+The host permissions remain limited to Coursera plus the explicitly supported AI-provider API origins. Provider API keys continue to use the extension's existing `chrome.storage.local` behavior; this refactor does not claim that local Chrome-profile storage is encrypted by the extension.
 
 ## Test strategy
 
@@ -142,7 +165,13 @@ Normal CI runs:
 - all `node:test` unit/contract/hygiene suites;
 - the real Chrome/Chromium read-only smoke harness.
 
-Coverage includes providers, course requirements, selector parsing, malformed fixtures, SPA state/cache transitions, Monaco read transport, presentation safety/timers, interception policy, diagnostics, manifest/module order, read-runtime cleanup, read-message routing, repository hygiene, and browser-level no-mutation checks.
+Coverage includes providers, course requirements and exact-once link encoding, explicit API field dependencies, selector parsing, malformed fixtures, SPA state/cache transitions and background-prefetch reconciliation, Monaco read-only transport/origin validation, presentation safety/timers, interception minimization, diagnostics sanitization, manifest/module order, listener ownership, read-runtime cleanup, read-message routing, repository hygiene, and browser-level no-mutation checks.
+
+## Pre-merge audit result
+
+A dedicated second-pass audit was performed after the planned refactor phases. It found and corrected cross-module issues that the earlier phase-by-phase work did not fully expose, including background-course SPA prefetch state replacement, stale in-flight materials responses, `mixed` diagnostics loss, over-broad intercepted data, unnecessary `activeTab`, modular write capability in the Monaco bridge, ambiguous Chrome listener ownership, wildcard legacy messaging, double-encoded links, missing API fields, and overly broad written-input detection.
+
+These fixes are permanent because each boundary is now represented in unit/contract/hygiene coverage. The final merge decision should be based on the normal CI run for the exact final PR head after every temporary workflow has been removed.
 
 ## Final safe refactor boundary
 
@@ -156,8 +185,9 @@ Completed and covered:
 - presentation extraction and safe text rendering;
 - dedicated read-only Chrome message routing;
 - duplicate read-only cleanup from `content.js`;
-- manifest permission reduction;
-- permanent CI, fixture, browser, and repository-hygiene gates.
+- manifest permission reduction to `storage`;
+- permanent CI, fixture, browser, and repository-hygiene gates;
+- dedicated pre-merge security/correctness audit hardening.
 
 Intentionally left in the legacy boundary:
 
