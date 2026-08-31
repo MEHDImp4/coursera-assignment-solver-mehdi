@@ -94,22 +94,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         solveCurrentAssessment();
         return true;
     }
-    if (request.action === "getSelection") {
-        scrapeAssessmentDetailed()
-            .then(({ questions, issues }) => sendResponse({ data: questions, issues }))
-            .catch((error) => sendResponse({ error: error.message || "Could not extract this assessment." }));
-        return true;
-    }
     if (request.action === "applyAIResponse") {
         applyAnswersToDOM(request.data)
             .then((summary) => sendResponse({ data: summary }))
             .catch((error) => sendResponse({ error: error.message || "Could not apply the AI answers." }));
-        return true;
-    }
-    if (request.action === "getCourseRequirements" || request.action === "getGradedAssignments") {
-        getCourseRequirements()
-            .then((result) => sendResponse({ data: result }))
-            .catch((error) => sendResponse({ error: error.message || "Could not load course requirements." }));
         return true;
     }
     if (request.action === "completeVideos") {
@@ -143,25 +131,6 @@ function readRuntime() {
         throw new Error("Coursera read runtime is unavailable. Reload the page and try again.");
     }
     return runtime;
-}
-
-function getCurrentCourseSlug() {
-    return readRuntime().getCurrentCourseSlug();
-}
-
-async function loadCourseMaterials() {
-    return readRuntime().loadCourseMaterials();
-}
-
-function normalizeCourseRequirements(materials, courseSlug) {
-    return readRuntime().normalizeCourseRequirements(materials, courseSlug);
-}
-
-async function getCourseRequirements() {
-    const courseSlug = getCurrentCourseSlug();
-    if (!courseSlug) throw new Error("Open a Coursera course page first.");
-    const materials = await loadCourseMaterials();
-    return normalizeCourseRequirements(materials, courseSlug);
 }
 
 function assessmentQuestionBlocks() {
