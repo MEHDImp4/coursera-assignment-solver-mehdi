@@ -14,6 +14,7 @@ const expectedContentScripts = [
   "coursera-state.js",
   "monaco-bridge.js",
   "presentation.js",
+  "read-message-router.js",
   "content.js",
   "content-adapters.js"
 ];
@@ -43,6 +44,15 @@ test("pure extracted modules do not perform Chrome messaging or DOM mutation act
   }
 });
 
+test("read message router is limited to read-only actions", () => {
+  const source = fs.readFileSync(path.join(root, "read-message-router.js"), "utf8");
+  assert.doesNotMatch(source, /applyAIResponse|solveQuizDirectly|completeVideos|fillDialogueAnswer/);
+  assert.doesNotMatch(source, /\.click\(\)|execCommand|dispatchEvent|replace-model/);
+  assert.match(source, /getSelection/);
+  assert.match(source, /getCourseRequirements/);
+  assert.match(source, /getParserDiagnostics/);
+});
+
 test("Monaco module keeps transport isolated from Chrome APIs", () => {
   const source = fs.readFileSync(path.join(root, "monaco-bridge.js"), "utf8");
   assert.doesNotMatch(source, /chrome\.runtime|chrome\.tabs|execCommand/);
@@ -65,6 +75,9 @@ test("adapter documents progressive extraction and exposes sanitized diagnostics
   assert.match(adapterSource, /CourseraApiKit/);
   assert.match(adapterSource, /CourseraStateKit/);
   assert.match(adapterSource, /MonacoBridgeKit/);
+  assert.match(adapterSource, /CourseraReadMessageRouterKit/);
   assert.match(adapterSource, /presentation:\s*"presentation\.js"/);
+  assert.match(adapterSource, /readMessageRouter:\s*"read-message-router\.js"/);
   assert.match(adapterSource, /courseState\.snapshot\(\)/);
+  assert.match(adapterSource, /MutationObserver/);
 });
