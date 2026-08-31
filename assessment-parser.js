@@ -9,12 +9,58 @@
   const SEMANTIC_PROMPT_SELECTOR = '[id^="prompt-"] [data-testid="cml-viewer"]';
   const LEGACY_BLOCK_SELECTOR = ".css-1erl2aq, .css-12u8wr5";
   const OPTION_SELECTOR = ".rc-Option";
+  const DOCUMENT_POSITION_PRECEDING = 2;
+  const DOCUMENT_POSITION_FOLLOWING = 4;
+
+  function hasPrompt(block) {
+    return Boolean(block?.querySelector?.(SEMANTIC_PROMPT_SELECTOR));
+  }
+
+  function blocksOverlap(first, second) {
+    if (first === second) return true;
+    if (typeof first?.contains === "function" && first.contains(second)) return true;
+    if (typeof second?.contains === "function" && second.contains(first)) return true;
+    return false;
+  }
+
+  function sortInDocumentOrder(blocks) {
+    return blocks.slice().sort((first, second) => {
+      if (first === second || typeof first?.compareDocumentPosition !== "function") return 0;
+      const position = first.compareDocumentPosition(second);
+      if (position & DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (position & DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+  }
+
+  function selectorState(doc) {
+    const semanticCandidates = Array.from(doc.querySelectorAll(SEMANTIC_BLOCK_SELECTOR));
+    const semanticBlocks = semanticCandidates.filter(hasPrompt);
+    const legacyCandidates = Array.from(doc.querySelectorAll(LEGACY_BLOCK_SELECTOR));
+    const legacyBlocks = legacyCandidates.filter(hasPrompt);
+    const distinctLegacyBlocks = legacyBlocks.filter((legacyBlock) => (
+      !semanticBlocks.some((semanticBlock) => blocksOverlap(legacyBlock, semanticBlock))
+    ));
+    const selectedBlocks = sortInDocumentOrder([...semanticBlocks, ...distinctLegacyBlocks]);
+
+    let strategy = "none";
+    if (semanticBlocks.length > 0 && distinctLegacyBlocks.length > 0) strategy = "mixed";
+    else if (semanticBlocks.length > 0) strategy = "semantic";
+    else if (legacyBlocks.length > 0) strategy = "legacy";
+
+    return {
+      strategy,
+      semanticCandidates,
+      semanticBlocks,
+      legacyCandidates,
+      legacyBlocks,
+      distinctLegacyBlocks,
+      selectedBlocks
+    };
+  }
 
   function assessmentQuestionBlocks(doc) {
-    const semanticBlocks = Array.from(doc.querySelectorAll(SEMANTIC_BLOCK_SELECTOR))
-      .filter((block) => block.querySelector(SEMANTIC_PROMPT_SELECTOR));
-    if (semanticBlocks.length > 0) return semanticBlocks;
-    return Array.from(doc.querySelectorAll(LEGACY_BLOCK_SELECTOR));
+    return selectorState(doc).selectedBlocks;
   }
 
   function promptText(block) {
@@ -80,14 +126,17 @@
   }
 
   function selectorDiagnostics(doc) {
-    const semanticCandidates = Array.from(doc.querySelectorAll(SEMANTIC_BLOCK_SELECTOR));
-    const semanticPrompts = semanticCandidates.filter((block) => block.querySelector(SEMANTIC_PROMPT_SELECTOR)).length;
-    const legacyCandidates = Array.from(doc.querySelectorAll(LEGACY_BLOCK_SELECTOR)).length;
+    const state = selectorState(doc);
     return {
-      strategy: semanticPrompts > 0 ? "semantic" : legacyCandidates > 0 ? "legacy" : "none",
-      semanticCandidates: semanticCandidates.length,
-      semanticPrompts,
-      legacyCandidates
+      strategy: state.strategy,
+      semanticCandidates: state.semanticCandidates.length,
+      semanticPrompts: state.semanticBlocks.length,
+      legacyCandidates: state.legacyCandidates.length,
+      legacyPrompts: state.legacyBlocks.length,
+      invalidCandidates:
+        (state.semanticCandidates.length - state.semanticBlocks.length) +
+        (state.legacyCandidates.length - state.legacyBlocks.length),
+      selectedBlocks: state.selectedBlocks.length
     };
   }
 
