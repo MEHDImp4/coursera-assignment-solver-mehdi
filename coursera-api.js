@@ -13,7 +13,7 @@
     "onDemandCourseMaterialPassableItemGroups.v1(requiredPassedCount,passableItemGroupChoiceIds,trackId)",
     "onDemandCourseMaterialPassableItemGroupChoices.v1(name,description,itemIds)",
     "onDemandCourseMaterialPassableLessonElements.v1(gradingWeight,isRequiredForPassing)",
-    "onDemandCourseMaterialItems.v2(name,slug,timeCommitment,contentSummary,isLocked,lockedStatus,itemLockedReasonCode,itemLockSummary)"
+    "onDemandCourseMaterialItems.v2(name,slug,moduleId,lessonId,timeCommitment,itemClass,contentSummary,isLocked,lockedStatus,itemLockedReasonCode,itemLockSummary)"
   ];
 
   function courseSlugFromPath(pathname) {
