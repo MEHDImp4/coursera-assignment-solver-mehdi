@@ -13,6 +13,7 @@ const expectedContentScripts = [
   "coursera-api.js",
   "coursera-state.js",
   "monaco-bridge.js",
+  "presentation.js",
   "content.js",
   "content-adapters.js"
 ];
@@ -47,6 +48,13 @@ test("Monaco module keeps transport isolated from Chrome APIs", () => {
   assert.doesNotMatch(source, /chrome\.runtime|chrome\.tabs|execCommand/);
   assert.match(source, /read-model/);
   assert.match(source, /replace-model/);
+});
+
+test("presentation module owns banner DOM work without HTML injection", () => {
+  const source = fs.readFileSync(path.join(root, "presentation.js"), "utf8");
+  assert.doesNotMatch(source, /chrome\.runtime|chrome\.tabs|innerHTML/);
+  assert.match(source, /createBannerPresenter/);
+  assert.match(source, /textContent/);
 });
 
 test("adapter documents progressive extraction and exposes sanitized diagnostics", () => {
