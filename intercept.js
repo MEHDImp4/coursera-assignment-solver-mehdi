@@ -35,9 +35,10 @@
             const safeUrl = policy.normalizeCourseraApiUrl(url, window.location.href);
             if (!safeUrl) return;
 
+            const safeHeaderNames = policy.observedRequestHeaderNames(requestData?.headers);
             const safeHeaders = policy.filterRequestHeaders(requestData?.headers);
             const safeResponse = policy.minimizeResponse(safeUrl, responseData);
-            if (!policy.shouldEmit(safeUrl, safeHeaders, safeResponse)) return;
+            if (!policy.shouldEmit(safeUrl, safeHeaderNames, safeResponse)) return;
 
             window.postMessage({
                 source: "auto-coursera-interceptor",
@@ -47,6 +48,7 @@
                 request: {
                     url: safeUrl,
                     method: requestData?.method || "GET",
+                    headerNames: safeHeaderNames,
                     headers: safeHeaders
                 }
             }, window.location.origin);
