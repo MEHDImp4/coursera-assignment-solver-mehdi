@@ -19,7 +19,8 @@ test("normal workflows never retain repository write permission", () => {
 
 test("manifest keeps only currently required extension permissions", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-  assert.deepEqual([...manifest.permissions].sort(), ["activeTab", "storage"]);
+  assert.deepEqual([...manifest.permissions].sort(), ["storage"]);
+  assert.equal(manifest.permissions.includes("activeTab"), false);
   assert.equal(manifest.permissions.includes("scripting"), false);
 
   const isolatedWorld = manifest.content_scripts.find((entry) => !entry.world);
