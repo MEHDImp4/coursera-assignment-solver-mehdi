@@ -21,9 +21,16 @@ These modules are written so they can be loaded in the browser and required dire
 - The read runtime uses this module for editor detection and **read-model** requests.
 - The legacy write path remains in `content.js` for now to avoid changing mutation behavior during this refactor.
 
+### Presentation
+
+- `presentation.js` — owns the in-page status banner, spinner style, hide/show timing, and accessibility attributes.
+- Dynamic banner messages are rendered with `textContent`/text nodes instead of `innerHTML`, so message strings cannot be interpreted as injected markup.
+- A pending hide timer is cancelled when a banner is refreshed, preventing an older timeout from removing a newer status message.
+- `content.js` keeps only thin `showOrUpdateBanner` / `hideBanner` delegates to `globalThis.CourseraPresentation`.
+
 ### Browser integration
 
-- `content.js` — orchestration/integration layer. Covered read-only helpers are now thin delegates to `CourseraReadRuntime`; Chrome message routing, mutation actions, write-side Monaco behavior, completion flows, and banners remain here.
+- `content.js` — orchestration/integration layer. Covered read-only and presentation helpers are thin delegates; Chrome message routing, mutation actions, write-side Monaco behavior, completion flows, and remaining integration logic stay here.
 - `content-adapters.js` — creates `globalThis.CourseraReadRuntime` and owns the modular read path for parsing, course metadata normalization, course-scoped cache, course-material requests, and Monaco read inspection.
 - `intercept.js` — MAIN-world network hook, constrained by `intercept-policy.js`.
 
@@ -42,10 +49,11 @@ The isolated-world scripts intentionally load in this order:
 3. `coursera-api.js`
 4. `coursera-state.js`
 5. `monaco-bridge.js`
-6. `content.js`
-7. `content-adapters.js`
+6. `presentation.js`
+7. `content.js`
+8. `content-adapters.js`
 
-The extracted modules load before the integration layer. `content-adapters.js` then exposes the stable `CourseraReadRuntime` object used by the read-only delegates in `content.js`.
+The extracted modules load before the integration layer. `presentation.js` exposes the banner presenter before `content.js` executes, while `content-adapters.js` exposes the stable `CourseraReadRuntime` object used by the read-only delegates.
 
 ## Course-scoped cache
 
@@ -75,9 +83,23 @@ After browser smoke coverage was established, the duplicated read-only implement
 - Monaco editor description;
 - detailed read-only assessment scraping.
 
-The implementation for those responsibilities lives in `CourseraReadRuntime`, backed by the extracted modules. This removed more than 300 legacy lines from `content.js` without modifying the existing mutation/submission paths.
+The implementation for those responsibilities lives in `CourseraReadRuntime`, backed by the extracted modules. This removed more than 300 legacy lines from `content.js` without modifying the existing mutation-oriented paths.
 
 `tests/content-read-runtime-contract.test.js` prevents the removed legacy helper bodies from being reintroduced and verifies that the adapter exposes a stable runtime object instead of reassigning legacy globals.
+
+## Presentation cleanup
+
+The original banner implementation created and styled its DOM directly inside `content.js`. That implementation has now been removed and replaced with delegates to `presentation.js`.
+
+The presentation module is covered by unit tests for:
+
+- info/success/error banner descriptors;
+- safe literal rendering of strings that contain HTML-like markup;
+- single spinner-style registration;
+- cancellation of stale hide timers;
+- absence of Chrome API dependencies and `innerHTML` usage.
+
+`tests/content-presentation-contract.test.js` prevents the old banner DOM implementation from returning to `content.js`.
 
 ## Why progressive extraction?
 
@@ -110,16 +132,17 @@ The harness has no network dependency on Coursera, no AI-provider calls, and no 
 
 The GitHub Actions workflow runs:
 
-- `node --check` against extension JavaScript files, including the extracted state and Monaco modules;
+- `node --check` against extension JavaScript files, including the extracted state, Monaco, and presentation modules;
 - unit tests for provider request construction;
 - unit tests for course requirements normalization;
 - unit tests for assessment classification and selector strategy;
 - course-state/cache isolation tests;
 - Monaco bridge validation/transport tests;
+- presentation rendering/timer tests;
 - interception-policy tests;
 - Dry Run diagnostics tests;
 - popup/manifest/module-load contracts;
-- read-runtime cleanup contracts;
+- read-runtime and presentation cleanup contracts;
 - a real headless-browser smoke test against sanitized local fixtures.
 
 ## Current migration status
@@ -131,6 +154,7 @@ Extracted, delegated, and covered by tests:
 - course-material API URL/response helpers;
 - read-side course state and course-scoped materials cache;
 - Monaco editor detection and read-side bridge transport;
+- in-page banner presentation;
 - interception minimization policy;
 - read-only diagnostics;
 - browser-level fixture verification with unchanged DOM/control state.
@@ -138,7 +162,6 @@ Extracted, delegated, and covered by tests:
 Still intentionally legacy:
 
 - Chrome message routing;
-- banner/presentation helpers;
 - write-side Monaco application path;
 - course completion/media mutation flows;
 - other mutation-oriented integration code.
@@ -147,9 +170,9 @@ Still intentionally legacy:
 
 The next safe refactors are:
 
-1. move banner/UI feedback into a small presentation adapter;
-2. add more sanitized fixture variants for selector fallback and malformed structures;
-3. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
+1. add more sanitized fixture variants for selector fallback and malformed structures;
+2. reduce remaining integration-only state duplication where it can be done without changing mutation behavior;
+3. isolate generic Chrome message routing/error serialization from feature-specific actions;
 4. continue shrinking `content.js` without expanding live assessment automation behavior.
 
 Automatic assessment submission is intentionally outside the scope of this architecture work.
