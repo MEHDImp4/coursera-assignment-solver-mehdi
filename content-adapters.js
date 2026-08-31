@@ -48,8 +48,8 @@
   seedCourseStateFromLegacyCache();
 
   window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
-    courseState.ingestInterceptMessage(event.data);
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    courseState.ingestInterceptMessage(event.data, window.location.href);
   });
   window.addEventListener("popstate", () => syncCourseLocation(true));
   window.addEventListener("hashchange", () => syncCourseLocation(true));
@@ -83,6 +83,11 @@
     const materials = await response.json();
     if (!courseraApi.hasSupportedCourseMaterials(materials)) {
       throw new Error("Coursera returned course materials in an unsupported format.");
+    }
+
+    syncCourseLocation(true);
+    if (currentCourseSlug() !== courseSlug) {
+      throw new Error("The open Coursera course changed while its materials were loading. Try again.");
     }
 
     courseState.setCourseMaterials(materials, courseSlug);
@@ -156,7 +161,7 @@
   }
 
   function getParserDiagnostics() {
-    syncCourseLocation(false);
+    syncCourseLocation(true);
     return {
       selectors: parser.selectorDiagnostics(document),
       state: courseState.snapshot(),
