@@ -1,0 +1,139 @@
+name: One-shot read router cleanup
+
+on:
+  push:
+    branches:
+      - feat/dry-run-foundations
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/dry-run-foundations
+          fetch-depth: 0
+
+      - name: Remove read-only message and course helper duplication
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("content.js")
+          text = path.read_text(encoding="utf-8")
+
+          blocks = [
+          '''    if (request.action === "getSelection") {
+                  scrapeAssessmentDetailed()
+                      .then(({ questions, issues }) => sendResponse({ data: questions, issues }))
+                      .catch((error) => sendResponse({ error: error.message || "Could not extract this assessment." }));
+                  return true;
+              }
+          ''',
+          '''    if (request.action === "getCourseRequirements" || request.action === "getGradedAssignments") {
+                  getCourseRequirements()
+                      .then((result) => sendResponse({ data: result }))
+                      .catch((error) => sendResponse({ error: error.message || "Could not load course requirements." }));
+                  return true;
+              }
+          ''',
+          '''function getCurrentCourseSlug() {
+              return readRuntime().getCurrentCourseSlug();
+          }
+
+          async function loadCourseMaterials() {
+              return readRuntime().loadCourseMaterials();
+          }
+
+          function normalizeCourseRequirements(materials, courseSlug) {
+              return readRuntime().normalizeCourseRequirements(materials, courseSlug);
+          }
+
+          async function getCourseRequirements() {
+              const courseSlug = getCurrentCourseSlug();
+              if (!courseSlug) throw new Error("Open a Coursera course page first.");
+              const materials = await loadCourseMaterials();
+              return normalizeCourseRequirements(materials, courseSlug);
+          }
+
+          '''
+          ]
+
+          for block in blocks:
+              if block not in text:
+                  raise SystemExit("Expected read-only legacy block was not found; refusing broad rewrite.")
+              text = text.replace(block, "", 1)
+
+          forbidden = [
+              'request.action === "getSelection"',
+              'request.action === "getCourseRequirements" || request.action === "getGradedAssignments"',
+              'function getCurrentCourseSlug()',
+              'async function loadCourseMaterials()',
+              'function normalizeCourseRequirements(materials, courseSlug)',
+              'async function getCourseRequirements()'
+          ]
+          leftovers = [marker for marker in forbidden if marker in text]
+          if leftovers:
+              raise SystemExit(f"Read-only duplication remains: {leftovers}")
+
+          required = [
+              'function readRuntime()',
+              'function assessmentQuestionBlocks()',
+              'function codeEditorDescriptor(block)',
+              'async function scrapeAssessmentDetailed()',
+              'request.action === "applyAIResponse"',
+              'request.action === "solveQuizDirectly"'
+          ]
+          missing = [marker for marker in required if marker not in text]
+          if missing:
+              raise SystemExit(f"Unexpected mutation-path change: {missing}")
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Check JavaScript syntax
+        run: |
+          for file in \
+            ai-providers.js \
+            background.js \
+            content.js \
+            course-requirements.js \
+            assessment-parser.js \
+            coursera-api.js \
+            coursera-state.js \
+            monaco-bridge.js \
+            presentation.js \
+            read-message-router.js \
+            content-adapters.js \
+            diagnostics.js \
+            dry-run.js \
+            intercept-policy.js \
+            intercept.js \
+            popup.js; do
+            node --check "$file"
+          done
+
+      - name: Run unit and contract tests
+        run: node --test tests/*.test.js
+
+      - name: Run read-only browser smoke test
+        run: bash tests/browser/run-smoke.sh
+
+      - name: Commit read-only routing cleanup
+        shell: bash
+        run: |
+          if git diff --quiet -- content.js; then
+            echo "No read-only routing cleanup was needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add content.js
+          git commit -m "refactor: move read-only messages out of content"
+          git push origin HEAD:feat/dry-run-foundations
