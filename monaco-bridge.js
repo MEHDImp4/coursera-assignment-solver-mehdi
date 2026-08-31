@@ -62,7 +62,10 @@
 
   function targetOriginFor(windowObject) {
     const origin = String(windowObject?.location?.origin || "").trim();
-    return origin && origin !== "null" ? origin : "*";
+    if (!origin || origin === "null") {
+      throw new Error("A concrete page origin is required for the Monaco bridge.");
+    }
+    return origin;
   }
 
   function createBridgeClient(windowObject, options = {}) {
@@ -89,7 +92,7 @@
         function handleResponse(event) {
           if (
             event.source !== windowObject ||
-            (targetOrigin !== "*" && event.origin !== targetOrigin) ||
+            event.origin !== targetOrigin ||
             event.data?.source !== RESPONSE_SOURCE ||
             event.data?.requestId !== requestId
           ) return;
