@@ -31,6 +31,8 @@ jobs:
             course-requirements.js \
             assessment-parser.js \
             coursera-api.js \
+            coursera-state.js \
+            monaco-bridge.js \
             content-adapters.js \
             diagnostics.js \
             dry-run.js \
@@ -42,3 +44,6 @@ jobs:
 
       - name: Run test suite
         run: node --test tests/*.test.js
+
+      - name: Run read-only browser smoke test
+        run: bash tests/browser/run-smoke.sh
