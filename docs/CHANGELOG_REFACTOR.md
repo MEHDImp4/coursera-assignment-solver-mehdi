@@ -49,8 +49,19 @@
 - Added the presentation module to manifest load-order contracts, syntax CI, and diagnostics metadata.
 - Removed the temporary write-enabled cleanup workflow after the guarded refactor succeeded.
 
+## Phase 7 — Selector resilience and malformed fixtures
+
+- Added sanitized `assessment-legacy.html`, `assessment-mixed.html`, and `assessment-malformed.html` fixtures.
+- Updated `assessment-parser.js` so semantic and legacy selector families can coexist on the same page.
+- Deduplicated blocks that match or nest across both selector families and preserved browser document order.
+- Filtered promptless candidates before extraction.
+- Added metadata-only diagnostics for legacy prompt counts, invalid candidates, and selected blocks.
+- Added `mixed` as an explicit selector strategy when distinct semantic and legacy questions coexist.
+- Added regression coverage for incomplete option structures falling back to supported written fields.
+- Expanded the Chrome headless smoke harness to inspect all assessment fixtures and verify every fixture remains unchanged after read-only parsing.
+
 ## Next
 
-- Add more sanitized fixture variants for selector fallback and malformed structures.
 - Reduce remaining integration-only state duplication without changing mutation behavior.
 - Isolate generic Chrome message routing/error serialization from feature-specific actions.
+- Add structural regression coverage for SPA navigation/course changes.
