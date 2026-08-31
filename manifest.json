@@ -20,6 +20,8 @@
         "course-requirements.js",
         "assessment-parser.js",
         "coursera-api.js",
+        "coursera-state.js",
+        "monaco-bridge.js",
         "content.js",
         "content-adapters.js"
       ]
