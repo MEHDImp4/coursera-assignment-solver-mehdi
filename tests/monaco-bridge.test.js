@@ -53,8 +53,8 @@ function fakeWindow() {
     }
   };
 
-  windowObject.emit = (data) => {
-    for (const listener of [...listeners]) listener({ source: windowObject, data });
+  windowObject.emit = (data, origin = windowObject.location.origin) => {
+    for (const listener of [...listeners]) listener({ source: windowObject, origin, data });
   };
   windowObject.posted = posted;
   return windowObject;
@@ -85,7 +85,14 @@ test("selects the last editor preceding a code evaluator", () => {
   );
 });
 
-test("rejects unsupported bridge actions and invalid replacement payloads", () => {
+test("modular bridge accepts read-model only", () => {
+  assert.throws(
+    () => validateBridgeRequest("replace-model", {
+      modelUri: "inmemory://model/1",
+      value: "replacement"
+    }),
+    /unsupported/i
+  );
   assert.throws(
     () => validateBridgeRequest("execute-code", { modelUri: "inmemory://model/1" }),
     /unsupported/i
@@ -94,10 +101,6 @@ test("rejects unsupported bridge actions and invalid replacement payloads", () =
     () => validateBridgeRequest("read-model", { modelUri: "file:///tmp/x" }),
     /model URI/i
   );
-  assert.throws(
-    () => validateBridgeRequest("replace-model", { modelUri: "inmemory://model/1" }),
-    /replacement string/i
-  );
 });
 
 test("uses the exact page origin when posting bridge messages", () => {
@@ -105,7 +108,7 @@ test("uses the exact page origin when posting bridge messages", () => {
   assert.equal(targetOriginFor({ location: { origin: "null" } }), "*");
 });
 
-test("read bridge resolves only the matching response", async () => {
+test("read bridge resolves only matching same-origin responses", async () => {
   const windowObject = fakeWindow();
   const client = createBridgeClient(windowObject, { timeoutMs: 200 });
   const pending = client.request("read-model", { modelUri: "inmemory://model/7" });
@@ -116,6 +119,12 @@ test("read bridge resolves only the matching response", async () => {
   assert.equal(outbound.message.source, REQUEST_SOURCE);
   assert.equal(outbound.message.action, "read-model");
 
+  windowObject.emit({
+    source: RESPONSE_SOURCE,
+    requestId: outbound.message.requestId,
+    ok: true,
+    value: "wrong-origin"
+  }, "https://example.com");
   windowObject.emit({
     source: RESPONSE_SOURCE,
     requestId: "wrong-id",
