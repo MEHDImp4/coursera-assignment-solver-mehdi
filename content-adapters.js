@@ -8,7 +8,7 @@
   const monaco = globalThis.MonacoBridgeKit;
 
   if (!requirements || !parser || !courseraApi || !courseStateKit || !monaco) {
-    console.warn("Coursera content modules were not loaded; keeping legacy content.js implementations.");
+    console.warn("Coursera content modules were not loaded; read runtime is unavailable.");
     return;
   }
 
@@ -38,18 +38,8 @@
     courseState.ingestInterceptMessage(event.data);
   });
 
-  // Progressive extraction: content.js still owns browser messaging, mutation actions,
-  // banners, and write-side Monaco behavior. Pure parsing, read-side editor inspection,
-  // course state, normalization, and request construction live in tested modules.
-  normalizeCourseRequirements = requirements.normalizeCourseRequirements;
-  getCurrentCourseSlug = currentCourseSlug;
-  codeEditorDescriptor = monaco.describeCodeEditor;
-  assessmentQuestionBlocks = function () {
-    return parser.assessmentQuestionBlocks(document);
-  };
-
-  loadCourseMaterials = async function () {
-    const courseSlug = getCurrentCourseSlug();
+  async function loadCourseMaterials() {
+    const courseSlug = currentCourseSlug();
     if (!courseSlug) throw new Error("Open a Coursera course page first.");
 
     courseState.setCourseSlug(courseSlug);
@@ -78,9 +68,9 @@
     capturedCourseMaterials = materials;
     capturedCourseId = courseSlug;
     return materials;
-  };
+  }
 
-  scrapeAssessmentDetailed = async function () {
+  async function scrapeAssessmentDetailed() {
     const questions = [];
     const issues = [];
     const nextCodeBindings = new Map();
@@ -122,7 +112,19 @@
 
     latestCodeQuestionBindings = nextCodeBindings;
     return { questions, issues };
-  };
+  }
+
+  // content.js owns orchestration and mutation paths. Read-only helpers delegate here.
+  globalThis.CourseraReadRuntime = Object.freeze({
+    getCurrentCourseSlug: currentCourseSlug,
+    loadCourseMaterials,
+    normalizeCourseRequirements: requirements.normalizeCourseRequirements,
+    assessmentQuestionBlocks() {
+      return parser.assessmentQuestionBlocks(document);
+    },
+    codeEditorDescriptor: monaco.describeCodeEditor,
+    scrapeAssessmentDetailed
+  });
 
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action !== "getParserDiagnostics") return false;
