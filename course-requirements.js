@@ -149,12 +149,15 @@
       0
     );
     const unresolvedCount = Math.max(0, candidateIds.size - requirements.length);
+    const gradingWeightsComplete = (
+      requirements.length > 0 &&
+      unresolvedCount === 0 &&
+      requirements.every((requirement) => requirement.gradingWeight != null)
+    );
 
-    if (totalGradingWeight > 0 && unresolvedCount === 0) {
+    if (gradingWeightsComplete && totalGradingWeight > 0) {
       requirements.forEach((requirement) => {
-        if (requirement.gradingWeight) {
-          requirement.weightPercent = Math.round((requirement.gradingWeight / totalGradingWeight) * 1000) / 10;
-        }
+        requirement.weightPercent = Math.round((requirement.gradingWeight / totalGradingWeight) * 1000) / 10;
       });
     }
 
@@ -169,6 +172,7 @@
       summary: {
         confirmed: hasConfirmedMetadata,
         totalGradingWeight,
+        gradingWeightsComplete,
         requiredCount: requirements.filter((requirement) => requirement.requiredForPassing).length,
         lockedCount: requirements.filter((requirement) => requirement.locked).length,
         unmappedCount: requirements.filter((requirement) => !requirement.link).length,
