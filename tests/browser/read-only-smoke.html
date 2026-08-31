@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Read-only browser smoke test</title>
+  <script src="../../assessment-parser.js"></script>
+  <script src="../../monaco-bridge.js"></script>
+</head>
+<body data-smoke-status="pending" data-dom-unchanged="pending">
+  <h1>Read-only browser smoke test</h1>
+  <iframe id="fixture" src="../fixtures/assessment-basic.html" title="Assessment fixture"></iframe>
+  <pre id="smoke-output">pending</pre>
+
+  <script>
+    (function () {
+      "use strict";
+
+      function assert(condition, message) {
+        if (!condition) throw new Error(message);
+      }
+
+      function snapshotDocument(doc) {
+        return JSON.stringify({
+          html: doc.body.innerHTML,
+          controls: Array.from(doc.querySelectorAll("input, textarea, [contenteditable]"))
+            .map((node) => ({
+              tagName: node.tagName,
+              type: node.getAttribute("type") || "",
+              checked: Boolean(node.checked),
+              value: typeof node.value === "string" ? node.value : "",
+              textContent: node.textContent || "",
+              disabled: Boolean(node.disabled)
+            }))
+        });
+      }
+
+      window.addEventListener("load", function () {
+        const output = document.getElementById("smoke-output");
+        const fixtureFrame = document.getElementById("fixture");
+
+        try {
+          assert(globalThis.AssessmentParserKit, "AssessmentParserKit was not loaded.");
+          assert(globalThis.MonacoBridgeKit, "MonacoBridgeKit was not loaded.");
+          assert(fixtureFrame && fixtureFrame.contentDocument, "Assessment fixture did not load.");
+
+          const fixtureDocument = fixtureFrame.contentDocument;
+          const before = snapshotDocument(fixtureDocument);
+          const blocks = AssessmentParserKit.assessmentQuestionBlocks(fixtureDocument);
+          const extracted = blocks.map((block, index) => (
+            AssessmentParserKit.extractQuestionShell(block, index + 1)
+          ));
+          const types = extracted.map((entry) => entry?.question?.type || "missing");
+          const diagnostics = AssessmentParserKit.selectorDiagnostics(fixtureDocument);
+          const codeDescriptor = MonacoBridgeKit.describeCodeEditor(blocks[3]);
+          const after = snapshotDocument(fixtureDocument);
+
+          assert(blocks.length === 4, `Expected 4 question blocks, found ${blocks.length}.`);
+          assert(
+            JSON.stringify(types) === JSON.stringify([
+              "single_answer",
+              "multiple_answer",
+              "text_input",
+              "code_expression"
+            ]),
+            `Unexpected question types: ${JSON.stringify(types)}.`
+          );
+          assert(diagnostics.strategy === "semantic", "Semantic selector strategy was not selected.");
+          assert(diagnostics.semanticPrompts === 4, "Expected four semantic prompts.");
+          assert(codeDescriptor.modelUri === "inmemory://model/example", "Unexpected Monaco model URI.");
+          assert(codeDescriptor.language === "javascript", "Unexpected Monaco language.");
+          assert(before === after, "Read-only parser smoke test changed fixture DOM or control state.");
+
+          document.body.dataset.smokeStatus = "pass";
+          document.body.dataset.domUnchanged = "true";
+          output.textContent = JSON.stringify({
+            status: "pass",
+            totalQuestions: blocks.length,
+            types,
+            selectorStrategy: diagnostics.strategy,
+            monaco: {
+              modelUri: codeDescriptor.modelUri,
+              language: codeDescriptor.language
+            },
+            domUnchanged: true
+          });
+        } catch (error) {
+          document.body.dataset.smokeStatus = "fail";
+          document.body.dataset.domUnchanged = "false";
+          output.textContent = JSON.stringify({
+            status: "fail",
+            message: error?.message || String(error)
+          });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
