@@ -24,8 +24,23 @@
 - Kept the legacy Monaco write path unchanged during this phase.
 - Added state and Monaco regression tests.
 
+## Phase 4 — Browser read-only smoke coverage
+
+- Added a real Chrome/Chromium headless smoke harness using only sanitized local fixtures.
+- Verified semantic assessment parsing and Monaco descriptor discovery in-browser.
+- Added before/after DOM and form-control snapshots to prove the read path does not modify the fixture.
+- Added the smoke harness to the normal GitHub Actions workflow.
+
+## Phase 5 — Remove duplicated read-only legacy helpers
+
+- Replaced legacy read-only helper bodies in `content.js` with thin delegates to `CourseraReadRuntime`.
+- Removed duplicated course-material request construction, course-requirement normalization, assessment selector parsing, Monaco descriptor discovery, and detailed read scraping from `content.js`.
+- Removed 307 lines from `content.js` while adding only 13 delegate lines.
+- Added `tests/content-read-runtime-contract.test.js` so the removed legacy implementations cannot silently return.
+- Left existing mutation-oriented integration paths outside this cleanup.
+
 ## Next
 
-- Add browser smoke coverage for read-only fixture behavior.
-- Remove duplicated legacy parsing/API helpers only after that coverage is stable.
-- Extract presentation/banner helpers.
+- Extract banner/UI feedback into a presentation-focused adapter.
+- Add more sanitized fixture variants for selector fallback and malformed structures.
+- Reduce remaining integration-only state duplication without expanding live assessment automation behavior.
