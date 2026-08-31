@@ -103,9 +103,16 @@ test("modular bridge accepts read-model only", () => {
   );
 });
 
-test("uses the exact page origin when posting bridge messages", () => {
+test("requires an exact concrete page origin for bridge messages", () => {
   assert.equal(targetOriginFor({ location: { origin: "https://www.coursera.org" } }), "https://www.coursera.org");
-  assert.equal(targetOriginFor({ location: { origin: "null" } }), "*");
+  assert.throws(
+    () => targetOriginFor({ location: { origin: "null" } }),
+    /concrete page origin/i
+  );
+  assert.throws(
+    () => targetOriginFor({ location: { origin: "" } }),
+    /concrete page origin/i
+  );
 });
 
 test("read bridge resolves only matching same-origin responses", async () => {
