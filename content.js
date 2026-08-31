@@ -466,54 +466,21 @@ async function fillCurrentDialogueAnswer() {
     fillReactTextarea(currentState.composer, reply);
 }
 
-// Helper UI Functions for the Banner
+// Presentation helpers are isolated in presentation.js.
+function presentationRuntime() {
+    const presenter = globalThis.CourseraPresentation;
+    if (!presenter || typeof presenter.show !== "function" || typeof presenter.hide !== "function") {
+        throw new Error("Coursera presentation runtime is unavailable. Reload the page and try again.");
+    }
+    return presenter;
+}
+
 function showOrUpdateBanner(text, type = "info") {
-    let banner = document.getElementById("auto-coursera-banner");
-    if (!banner) {
-        banner = document.createElement("div");
-        banner.id = "auto-coursera-banner";
-        banner.style.position = "fixed";
-        banner.style.bottom = "30px";
-        banner.style.left = "50%";
-        banner.style.transform = "translateX(-50%)";
-        banner.style.zIndex = "9999999";
-        banner.style.padding = "16px 32px";
-        banner.style.color = "white";
-        banner.style.fontWeight = "bold";
-        banner.style.borderRadius = "50px";
-        banner.style.boxShadow = "0 10px 25px rgba(0,0,0,0.5)";
-        banner.style.fontFamily = "ui-sans-serif, system-ui, -apple-system, sans-serif";
-        banner.style.fontSize = "16px";
-        banner.style.transition = "opacity 0.3s ease";
-        document.body.appendChild(banner);
-    }
-
-    if (type === "success") {
-        banner.style.backgroundColor = "#16a34a";
-        banner.innerHTML = "✅ " + text;
-    } else if (type === "error") {
-        banner.style.backgroundColor = "#ef4444";
-        banner.innerHTML = "❌ " + text;
-    } else {
-        banner.style.backgroundColor = "#2563eb";
-        banner.innerHTML = `<span style="display:inline-block; margin-right:8px; animation: spin 1s linear infinite;">⏳</span> ` + text;
-
-        // Inject a quick keyframe style if it doesn't exist for the spinner
-        if (!document.getElementById("auto-coursera-styles")) {
-            const style = document.createElement("style");
-            style.id = "auto-coursera-styles";
-            style.innerHTML = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
-            document.head.appendChild(style);
-        }
-    }
+    presentationRuntime().show(text, type);
 }
 
 function hideBanner() {
-    const banner = document.getElementById("auto-coursera-banner");
-    if (banner) {
-        banner.style.opacity = "0";
-        setTimeout(() => banner.remove(), 300);
-    }
+    presentationRuntime().hide();
 }
 
 async function startCompletionLoop() {
