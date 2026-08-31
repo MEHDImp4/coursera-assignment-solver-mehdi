@@ -40,6 +40,7 @@ test("normalizes confirmed course requirements from a sanitized fixture", () => 
   assert.equal(result.requirements.length, 2);
   assert.equal(result.summary.confirmed, true);
   assert.equal(result.summary.totalGradingWeight, 4);
+  assert.equal(result.summary.gradingWeightsComplete, true);
   assert.equal(result.summary.requiredCount, 1);
   assert.equal(result.summary.lockedCount, 1);
   assert.equal(result.summary.unresolvedCount, 0);
@@ -53,6 +54,21 @@ test("normalizes confirmed course requirements from a sanitized fixture", () => 
   assert.equal(exam.locked, true);
   assert.match(quiz.link, /\/learn\/sample-course\/quiz\/quiz-1\/practice-checkpoint$/);
   assert.match(exam.link, /\/learn\/sample-course\/exam\/exam-1\/module-assessment$/);
+});
+
+test("does not invent percentages from partial grading-weight metadata", () => {
+  const partialFixture = structuredClone(fixture);
+  const passables = partialFixture.linked["onDemandCourseMaterialPassableLessonElements.v1"];
+  delete passables[1].gradingWeight;
+
+  const result = normalizeCourseRequirements(partialFixture, "sample-course");
+  const quiz = result.requirements.find((item) => item.id === "quiz-1");
+  const exam = result.requirements.find((item) => item.id === "exam-1");
+
+  assert.equal(result.summary.totalGradingWeight, 1);
+  assert.equal(result.summary.gradingWeightsComplete, false);
+  assert.equal(quiz.weightPercent, null);
+  assert.equal(exam.weightPercent, null);
 });
 
 test("encodes course and item slugs exactly once", () => {
@@ -83,6 +99,7 @@ test("falls back to grade-relevant item types when passable metadata is absent",
 
   const result = normalizeCourseRequirements(materials, "sample");
   assert.equal(result.summary.confirmed, false);
+  assert.equal(result.summary.gradingWeightsComplete, false);
   assert.deepEqual(result.requirements.map((item) => item.id), ["quiz"]);
   assert.equal(result.requirements[0].source, "detected");
 });
