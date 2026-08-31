@@ -89,6 +89,26 @@ The GitHub Actions workflow runs:
 - Dry Run diagnostics tests;
 - popup/manifest/module-load contract tests.
 
+## Current migration status
+
+Extracted and covered by tests:
+
+- course-requirement normalization;
+- assessment selector strategy and question-shell parsing;
+- course-material API URL/response helpers;
+- read-side course state and course-scoped materials cache;
+- Monaco editor detection and read-side bridge transport;
+- interception minimization policy;
+- read-only diagnostics.
+
+Still intentionally legacy:
+
+- Chrome message routing;
+- banner/presentation helpers;
+- write-side Monaco application path;
+- course completion/media mutation flows;
+- duplicated helper definitions inside `content.js` until browser smoke coverage is strong enough to remove them safely.
+
 ## Next extraction candidates
 
 The next safe refactors are:
