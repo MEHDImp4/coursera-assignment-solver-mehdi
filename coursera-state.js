@@ -19,10 +19,9 @@
   function courseSlugFromUrl(value) {
     try {
       const url = new URL(String(value || ""), "https://www.coursera.org/");
-      const querySlug = url.searchParams.get("slug");
-      if (querySlug) return querySlug;
       const pathMatch = url.pathname.match(/\/learn\/([^/]+)/);
-      return pathMatch ? decodeURIComponent(pathMatch[1]) : "";
+      if (pathMatch) return decodeURIComponent(pathMatch[1]);
+      return url.searchParams.get("slug") || "";
     } catch {
       return "";
     }
@@ -36,8 +35,11 @@
         : [];
 
     return entries
-      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
-      .map(([name]) => String(name || "").toLowerCase())
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        return Array.isArray(entry) && entry.length >= 1 ? entry[0] : "";
+      })
+      .map((name) => String(name || "").toLowerCase())
       .filter((name) => OBSERVED_HEADER_NAMES.has(name));
   }
 
@@ -109,20 +111,35 @@
       return materials;
     }
 
-    function ingestInterceptMessage(message) {
+    function ingestInterceptMessage(message, activeLocation) {
       if (!message || message.source !== INTERCEPT_SOURCE) return false;
 
       const requestUrl = message.request?.url || message.url || "";
-      const slug = courseSlugFromUrl(requestUrl);
-      if (slug) setCourseSlug(slug);
+      const requestSlug = courseSlugFromUrl(requestUrl);
+      const hasActiveLocation = activeLocation !== undefined;
+      const activeSlug = hasActiveLocation ? courseSlugFromUrl(activeLocation) : "";
 
-      normalizeHeaderNames(message.request?.headers).forEach((name) => {
+      if (hasActiveLocation) {
+        if (activeSlug) setCourseSlug(activeSlug);
+        else clearCourse();
+      } else if (requestSlug) {
+        setCourseSlug(requestSlug);
+      }
+
+      normalizeHeaderNames(message.request?.headerNames || message.request?.headers).forEach((name) => {
         observedHeaderNames.add(name);
       });
 
       if (hasUserContext(message.response)) observedUserContext = true;
-      if (hasSupportedMaterials(message.response) && slug) {
-        setCourseMaterials(message.response, slug);
+
+      const cacheSlug = hasActiveLocation ? activeSlug : requestSlug;
+      if (
+        hasSupportedMaterials(message.response) &&
+        requestSlug &&
+        cacheSlug &&
+        requestSlug === cacheSlug
+      ) {
+        setCourseMaterials(message.response, cacheSlug);
       }
 
       return true;
