@@ -5,7 +5,7 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 
-test("normal workflows never retain repository write permission", () => {
+test("normal workflows stay read-only and pin first-party actions to immutable commits", () => {
   const workflowsDir = path.join(root, ".github", "workflows");
   const workflowFiles = fs.readdirSync(workflowsDir).filter((name) => /\.ya?ml$/i.test(name));
   assert.ok(workflowFiles.length > 0);
@@ -14,6 +14,17 @@ test("normal workflows never retain repository write permission", () => {
     assert.doesNotMatch(filename, /temporary|one-shot|cleanup-refactor/i);
     const source = fs.readFileSync(path.join(workflowsDir, filename), "utf8");
     assert.doesNotMatch(source, /contents\s*:\s*write/i, `${filename} must not grant contents: write`);
+
+    const actionUses = [...source.matchAll(/^\s*uses:\s*([^#\s]+)(?:\s*#.*)?$/gm)]
+      .map((match) => match[1]);
+    for (const action of actionUses) {
+      if (!action.startsWith("actions/")) continue;
+      assert.match(
+        action,
+        /^actions\/[^@\s]+@[a-f0-9]{40}$/i,
+        `${filename} must pin ${action} to a full commit SHA`
+      );
+    }
   }
 });
 
