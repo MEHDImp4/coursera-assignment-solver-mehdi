@@ -25,6 +25,11 @@ test("builds the course materials endpoint with required fields", () => {
   for (const field of MATERIAL_FIELDS) {
     assert.match(url.searchParams.get("fields"), new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+
+  const fields = url.searchParams.get("fields");
+  for (const requiredItemField of ["moduleId", "lessonId", "itemClass", "contentSummary"]) {
+    assert.match(fields, new RegExp(`onDemandCourseMaterialItems\\.v2\\([^)]*${requiredItemField}`));
+  }
 });
 
 test("rejects empty course slugs", () => {
