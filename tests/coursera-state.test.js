@@ -50,6 +50,33 @@ test("scopes cached materials to the active course", () => {
   state.setCourseSlug("course-b");
   assert.equal(state.getCourseMaterials("course-a"), null);
   assert.equal(state.snapshot().hasCourseMaterials, false);
+  assert.equal(state.snapshot().courseRevision, 2);
+});
+
+test("SPA location sync invalidates stale course cache and clears state off course routes", () => {
+  const state = createCourseState();
+  state.syncLocation("https://www.coursera.org/learn/course-a/home/week/1");
+  state.setCourseMaterials(materials("item-a"), "course-a");
+  const firstRevision = state.snapshot().courseRevision;
+
+  state.syncLocation("https://www.coursera.org/learn/course-a/quiz/example");
+  assert.equal(state.snapshot().courseRevision, firstRevision);
+  assert.equal(state.snapshot().hasCourseMaterials, true);
+
+  state.syncLocation("https://www.coursera.org/learn/course-b/home/week/1");
+  assert.equal(state.snapshot().courseSlug, "course-b");
+  assert.equal(state.snapshot().hasCourseMaterials, false);
+  assert.equal(state.snapshot().courseRevision, firstRevision + 1);
+
+  state.syncLocation("https://www.coursera.org/account-settings");
+  assert.deepEqual(state.snapshot(), {
+    courseSlug: "",
+    onCourseRoute: false,
+    courseRevision: firstRevision + 2,
+    hasCourseMaterials: false,
+    observedHeaderNames: [],
+    hasUserContext: false
+  });
 });
 
 test("ingests sanitized interceptor messages without exposing account or header values", () => {
@@ -83,6 +110,8 @@ test("ingests sanitized interceptor messages without exposing account or header 
 
   assert.deepEqual(snapshot, {
     courseSlug: "course-a",
+    onCourseRoute: true,
+    courseRevision: 1,
     hasCourseMaterials: true,
     observedHeaderNames: ["x-csrf3-token"],
     hasUserContext: true
@@ -96,6 +125,8 @@ test("ignores unrelated window messages", () => {
   assert.equal(state.ingestInterceptMessage({ source: "some-page-script" }), false);
   assert.deepEqual(state.snapshot(), {
     courseSlug: "",
+    onCourseRoute: false,
+    courseRevision: 0,
     hasCourseMaterials: false,
     observedHeaderNames: [],
     hasUserContext: false
