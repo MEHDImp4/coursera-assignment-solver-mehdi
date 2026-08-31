@@ -75,11 +75,25 @@ Sanitized regression fixtures live under `tests/fixtures/`.
 
 Fixtures must never contain cookies, authorization headers, CSRF values, real learner IDs, real assessment answers, or copied private course content.
 
+## Browser smoke harness
+
+`tests/browser/read-only-smoke.html` runs the extracted parser and Monaco descriptor code in a real browser against the sanitized assessment fixture. `tests/browser/run-smoke.sh` serves the repository only on `127.0.0.1` and launches the Chrome/Chromium binary already available on the CI runner.
+
+The smoke harness asserts that:
+
+- four fixture questions are discovered;
+- their detected types are `single_answer`, `multiple_answer`, `text_input`, and `code_expression`;
+- the semantic selector strategy is selected;
+- the Monaco model URI and language are discovered correctly;
+- the fixture DOM and form-control state are byte-for-byte equivalent before and after read-side inspection.
+
+The harness has no network dependency on Coursera, no AI-provider calls, and no Chrome-extension messaging. A failure blocks CI before further legacy removal.
+
 ## Test strategy
 
 The GitHub Actions workflow runs:
 
-- `node --check` against extension JavaScript files;
+- `node --check` against extension JavaScript files, including the extracted state and Monaco modules;
 - unit tests for provider request construction;
 - unit tests for course requirements normalization;
 - unit tests for assessment classification and selector strategy;
@@ -87,7 +101,8 @@ The GitHub Actions workflow runs:
 - Monaco bridge validation/transport tests;
 - interception-policy tests;
 - Dry Run diagnostics tests;
-- popup/manifest/module-load contract tests.
+- popup/manifest/module-load contract tests;
+- a real headless-browser smoke test against sanitized local fixtures.
 
 ## Current migration status
 
@@ -99,7 +114,8 @@ Extracted and covered by tests:
 - read-side course state and course-scoped materials cache;
 - Monaco editor detection and read-side bridge transport;
 - interception minimization policy;
-- read-only diagnostics.
+- read-only diagnostics;
+- browser-level fixture verification with unchanged DOM/control state.
 
 Still intentionally legacy:
 
@@ -107,15 +123,15 @@ Still intentionally legacy:
 - banner/presentation helpers;
 - write-side Monaco application path;
 - course completion/media mutation flows;
-- duplicated helper definitions inside `content.js` until browser smoke coverage is strong enough to remove them safely.
+- duplicated helper definitions inside `content.js`, now eligible for conservative removal because the read-side adapter path has browser smoke coverage.
 
 ## Next extraction candidates
 
 The next safe refactors are:
 
-1. add browser smoke tests around the read-only fixture harness;
-2. remove duplicated legacy course-requirement/API helper implementations after the browser harness proves the adapter path;
-3. move banner/UI feedback into a small presentation adapter;
+1. remove duplicated legacy course-requirement/API/parser helper implementations now covered by the browser harness and unit tests;
+2. move banner/UI feedback into a small presentation adapter;
+3. add more sanitized fixture variants for selector fallback and malformed structures;
 4. continue shrinking `content.js` without expanding live assessment automation behavior.
 
 Automatic assessment submission is intentionally outside the scope of this architecture work.
