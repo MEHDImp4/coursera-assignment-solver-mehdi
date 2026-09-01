@@ -4,8 +4,6 @@
   "version": "1.1.0",
   "description": "An AI-powered extension to instantly auto-complete Coursera videos, readings, and automatically solve quizzes.",
   "permissions": [
-    "activeTab",
-    "scripting",
     "storage"
   ],
   "background": {
@@ -17,7 +15,15 @@
         "*://*.coursera.org/learn/*"
       ],
       "js": [
-        "content.js"
+        "course-requirements.js",
+        "assessment-parser.js",
+        "coursera-api.js",
+        "coursera-state.js",
+        "monaco-bridge.js",
+        "presentation.js",
+        "read-message-router.js",
+        "content.js",
+        "content-adapters.js"
       ]
     },
     {
@@ -26,6 +32,7 @@
         "*://*.coursera.org/learn/*"
       ],
       "js": [
+        "intercept-policy.js",
         "intercept.js"
       ],
       "world": "MAIN"

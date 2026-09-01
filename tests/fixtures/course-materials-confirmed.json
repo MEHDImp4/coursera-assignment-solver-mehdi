@@ -1,0 +1,58 @@
+{
+  "elements": [
+    { "moduleIds": ["module-1"] }
+  ],
+  "linked": {
+    "onDemandCourseMaterialModules.v1": [
+      {
+        "id": "module-1",
+        "name": "Module One",
+        "lessonIds": ["lesson-1"]
+      }
+    ],
+    "onDemandCourseMaterialLessons.v1": [
+      {
+        "id": "lesson-1",
+        "name": "Core concepts",
+        "itemIds": ["course~quiz-1", "course~exam-1"]
+      }
+    ],
+    "onDemandCourseMaterialItems.v2": [
+      {
+        "id": "quiz-1",
+        "moduleId": "module-1",
+        "lessonId": "lesson-1",
+        "name": "Practice checkpoint",
+        "slug": "practice-checkpoint",
+        "timeCommitment": 600,
+        "contentSummary": { "typeName": "quiz" },
+        "isLocked": false
+      },
+      {
+        "id": "exam-1",
+        "moduleId": "module-1",
+        "lessonId": "lesson-1",
+        "name": "Module assessment",
+        "slug": "module-assessment",
+        "timeCommitment": 1200,
+        "contentSummary": { "typeName": "exam" },
+        "lockedStatus": "locked_prerequisite",
+        "itemLockSummary": "Complete the prerequisite first."
+      }
+    ],
+    "onDemandCourseMaterialPassableLessonElements.v1": [
+      {
+        "id": "passable~quiz-1",
+        "gradingWeight": 1,
+        "isRequiredForPassing": false
+      },
+      {
+        "id": "passable~exam-1",
+        "gradingWeight": 3,
+        "isRequiredForPassing": true
+      }
+    ],
+    "onDemandCourseMaterialPassableItemGroups.v1": [],
+    "onDemandCourseMaterialPassableItemGroupChoices.v1": []
+  }
+}

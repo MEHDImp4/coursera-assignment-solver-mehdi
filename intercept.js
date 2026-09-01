@@ -1,5 +1,12 @@
 (function () {
-    // 1. Save references to original networking features
+    "use strict";
+
+    const policy = globalThis.CourseraInterceptPolicy;
+    if (!policy) {
+        console.error("AutoCoursera interceptor policy was not loaded.");
+        return;
+    }
+
     const originalFetch = window.fetch;
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
@@ -20,19 +27,33 @@
         if (initParams?.headers) {
             new Headers(initParams.headers).forEach((value, name) => headers.set(name, value));
         }
-        return normalizeHeaders(headers);
+        return normalizeHeaders(headers).filter(([name]) => (
+            policy.CAPTURED_HEADER_NAMES.has(String(name || "").toLowerCase())
+        ));
     }
 
-    // 2. Setup the bridge to talk to content.js
     class InterceptBus {
         send(url, contentType, responseData, requestData) {
+            const safeUrl = policy.normalizeCourseraApiUrl(url, window.location.href);
+            if (!safeUrl) return;
+
+            const safeHeaderNames = policy.observedRequestHeaderNames(requestData?.headers);
+            const safeHeaders = policy.filterRequestHeaders(requestData?.headers);
+            const safeResponse = policy.minimizeResponse(safeUrl, responseData);
+            if (!policy.shouldEmit(safeUrl, safeHeaderNames, safeResponse)) return;
+
             window.postMessage({
                 source: "auto-coursera-interceptor",
-                url: url,
-                contentType: contentType,
-                response: responseData,
-                request: requestData
-            }, "*");
+                url: safeUrl,
+                contentType,
+                response: safeResponse,
+                request: {
+                    url: safeUrl,
+                    method: requestData?.method || "GET",
+                    headerNames: safeHeaderNames,
+                    headers: safeHeaders
+                }
+            }, window.location.origin);
         }
     }
     const messageBus = new InterceptBus();
@@ -45,7 +66,7 @@
             source: MONACO_RESPONSE_SOURCE,
             requestId,
             ...payload
-        }, "*");
+        }, window.location.origin);
     }
 
     async function findMonacoModel(modelUri) {
@@ -60,7 +81,11 @@
     }
 
     window.addEventListener("message", async (event) => {
-        if (event.source !== window || event.data?.source !== MONACO_REQUEST_SOURCE) return;
+        if (
+            event.source !== window ||
+            event.origin !== window.location.origin ||
+            event.data?.source !== MONACO_REQUEST_SOURCE
+        ) return;
 
         const { requestId, action, modelUri, value, expectedValue } = event.data;
         if (typeof requestId !== "string" || !/^[a-z0-9-]{1,80}$/i.test(requestId)) return;
@@ -110,63 +135,55 @@
         }
     });
 
-    // 3. Patch window.fetch
     window.fetch = async function (resource, initParams) {
-        try {
-            // Let the request pass normally
-            const response = await originalFetch.apply(this, arguments);
+        const response = await originalFetch.apply(this, arguments);
 
-            // Clone and parse what we can without breaking things
+        try {
+            const requestUrl = response.url || (resource instanceof Request ? resource.url : String(resource || ""));
+            const safeUrl = policy.normalizeCourseraApiUrl(requestUrl, window.location.href);
+            if (!safeUrl) return response;
+
             const responseClone = response.clone();
-            const url = responseClone.url;
             const contentType = responseClone.headers.get("content-type") || "";
 
             let responseBody;
             if (contentType.includes("application/json")) {
                 try {
                     responseBody = await responseClone.json();
-                } catch (e) {
-                    console.error("Error parsing intercepted JSON", e);
+                } catch {
+                    // Ignore malformed or streaming JSON copies; the original response remains untouched.
                 }
             }
 
-            // Capture request tokens & headers
-            const requestData = {
-                url: url,
+            messageBus.send(safeUrl, contentType, responseBody, {
+                url: safeUrl,
                 method: initParams?.method || (resource instanceof Request ? resource.method : "GET"),
-                headers: getFetchRequestHeaders(resource, initParams),
-                body: initParams?.body,
-                status: responseClone.status,
-                statusText: responseClone.statusText
-            };
-
-            // Send captured data to content.js
-            messageBus.send(url, contentType, responseBody, requestData);
-
-            return response;
+                headers: getFetchRequestHeaders(resource, initParams)
+            });
         } catch (error) {
-            console.error("Fetch intercept error:", error);
-            throw error;
+            console.warn("AutoCoursera passive fetch inspection failed; returning the original response.", error);
         }
+
+        return response;
     };
 
-    // 4. Patch XMLHttpRequest
     XMLHttpRequest.prototype.open = function (method, url) {
         this._interceptUrl = url;
         this._interceptMethod = method;
         this._interceptHeaders = [];
-        
+
         return originalXHROpen.apply(this, arguments);
     };
 
     XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
         const result = originalXHRSetRequestHeader.apply(this, arguments);
+        const normalizedName = String(name).toLowerCase();
+        if (!policy.CAPTURED_HEADER_NAMES.has(normalizedName)) return result;
 
         if (!Array.isArray(this._interceptHeaders)) {
             this._interceptHeaders = [];
         }
 
-        const normalizedName = String(name).toLowerCase();
         const normalizedValue = String(value);
         const existingHeader = this._interceptHeaders.find(
             ([headerName]) => headerName === normalizedName
@@ -181,35 +198,38 @@
         return result;
     };
 
-    XMLHttpRequest.prototype.send = function (body) {
-        this.addEventListener('load', function () {
-            const url = this.responseURL || this._interceptUrl;
-            const contentType = this.getResponseHeader('content-type') || "";
-            let responseData;
-            
-            if (contentType.includes("application/json")) {
-                try {
-                    responseData = JSON.parse(this.responseText);
-                } catch(e) {}
+    XMLHttpRequest.prototype.send = function () {
+        this.addEventListener("load", function () {
+            try {
+                const rawUrl = this.responseURL || this._interceptUrl;
+                const safeUrl = policy.normalizeCourseraApiUrl(rawUrl, window.location.href);
+                if (!safeUrl) return;
+
+                const contentType = this.getResponseHeader("content-type") || "";
+                let responseData;
+
+                if (contentType.includes("application/json")) {
+                    try {
+                        responseData = JSON.parse(this.responseText);
+                    } catch {
+                        // Ignore response bodies that are not valid JSON.
+                    }
+                }
+
+                messageBus.send(safeUrl, contentType, responseData, {
+                    url: safeUrl,
+                    method: this._interceptMethod,
+                    headers: Array.isArray(this._interceptHeaders)
+                        ? this._interceptHeaders.map(([name, value]) => [name, value])
+                        : []
+                });
+            } catch (error) {
+                console.warn("AutoCoursera passive XHR inspection failed.", error);
             }
-
-            const requestData = {
-                url: url,
-                method: this._interceptMethod,
-                headers: Array.isArray(this._interceptHeaders)
-                    ? this._interceptHeaders.map(([name, value]) => [name, value])
-                    : [],
-                body: body,
-                status: this.status,
-                statusText: this.statusText
-            };
-
-            messageBus.send(url, contentType, responseData, requestData);
         });
 
         return originalXHRSend.apply(this, arguments);
     };
-    
-    // Add an alert so we visually know this script injected properly during testing
-    console.log("✅ AutoCoursera Interceptor Successfully Attached!");
+
+    console.log("AutoCoursera interceptor attached with restricted capture policy.");
 })();

@@ -69,6 +69,9 @@ async function loadAIConfiguration() {
   if (migrated) {
     await chrome.storage.local.set({ aiProviderSettings: settings, aiProvider: providerId });
   }
+  if (stored.userApiKey) {
+    await chrome.storage.local.remove("userApiKey");
+  }
 
   return configuration;
 }

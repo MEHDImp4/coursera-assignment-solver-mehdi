@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+      - "feat/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        run: |
+          for file in \
+            ai-providers.js \
+            background.js \
+            content.js \
+            course-requirements.js \
+            assessment-parser.js \
+            coursera-api.js \
+            coursera-state.js \
+            monaco-bridge.js \
+            presentation.js \
+            read-message-router.js \
+            content-adapters.js \
+            diagnostics.js \
+            dry-run.js \
+            intercept-policy.js \
+            intercept.js \
+            popup.js; do
+            node --check "$file"
+          done
+
+      - name: Run test suite
+        run: node --test tests/*.test.js
+
+      - name: Run read-only browser smoke test
+        run: bash tests/browser/run-smoke.sh

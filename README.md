@@ -19,6 +19,9 @@
 
 A sleek, lightweight Chrome Extension to automate and help you navigate your Coursera courses with ease. 
 
+## 🧪 Fork development status
+
+The planned read-only/security refactor on `feat/dry-run-foundations` is complete and has undergone a dedicated pre-merge audit. The branch now includes modular read-only diagnostics, minimized interception, SPA-safe course state, read-only Monaco inspection, sanitized fixtures, repository-hygiene gates, and real Chrome headless regression tests. See `docs/ARCHITECTURE.md`, `docs/CHANGELOG_REFACTOR.md`, and PR #1 for the audited boundary and validation status.
 
 ## ✨ Features
 
@@ -28,7 +31,7 @@ A sleek, lightweight Chrome Extension to automate and help you navigate your Cou
 * **🤖 Multi-Provider Quiz Solver:** Automatically fills multiple-choice, text-input, essay, and Monaco code-expression questions with Gemini, OpenAI, Claude, xAI, DeepSeek, Groq, or OpenRouter.
 * **💬 Dialogue Answer Drafting:** Reads the current Coursera Coach question and fills a suggested answer into the message box for you to review and send.
 * **🎛️ Model Choice:** Pick from curated current models—including multiple Gemini, GPT, and Claude generations—or enter a custom model ID.
-* **🔐 Session-Aware Request Interception:** Observes Coursera's native Fetch and XMLHttpRequest traffic to retain the current anti-CSRF request context in memory.
+* **🔐 Session-Aware Request Interception:** Observes Coursera's native Fetch and XMLHttpRequest traffic while minimizing the session metadata exposed across the extension boundary.
 
 ## 🚀 How to Use
 
@@ -89,48 +92,43 @@ Coursera can return incomplete or course-specific metadata. When an item cannot 
 
 ## 🔐 Coursera Request Interception
 
-Coursera protects state-changing API requests with session cookies and anti-CSRF headers. Those header values can change during a session, so copying or hardcoding a value is unreliable. The extension instead observes the headers already attached to Coursera's own authenticated requests.
+Coursera protects state-changing API requests with session cookies and anti-CSRF headers. Those values can change during a session, so the extension observes the request context already used by Coursera rather than hardcoding it. The audited interceptor minimizes what crosses from the page's MAIN world into the isolated extension world.
 
 ### What changed
 
-The interceptor now handles both networking APIs used by the Coursera web application:
+The interceptor handles both Fetch and XMLHttpRequest while applying a restrictive forwarding policy:
 
-* **Fetch:** Headers supplied through Fetch options or a `Request` object are converted to normalized `[name, value]` pairs.
-* **XMLHttpRequest:** The extension wraps `setRequestHeader()` in addition to `open()` and `send()`. This fixes the previous behavior where XHR URLs and bodies were visible but their request headers were always empty.
-* **Consistent message format:** Fetch and XHR now send headers to the content script using the same lowercase pair format.
-* **Duplicate XHR headers:** Repeated calls to `setRequestHeader()` are combined using the same comma-separated behavior as the browser.
+* **Coursera API only:** non-Coursera traffic and non-`/api/` URLs are ignored.
+* **Query minimization:** forwarded URLs keep only `slug` and `userId`; unrelated query parameters are discarded.
+* **No request bodies:** Fetch/XHR request bodies are never forwarded through the interceptor bridge.
+* **Header-name diagnostics:** observed allowlisted CSRF/request headers are represented by names only for modular diagnostics.
+* **Single retained header value:** only `x-csrf3-token` may cross with its value because the existing media-completion path still requires it. Authorization, Cookie, CSRF2, framework-CSRF, and `x-requested-with` values are not forwarded.
+* **Response minimization:** dispatcher data is reduced to the learner identifier where legacy integration needs it, while course-material responses are reduced to module/lesson/item/passable fields consumed by the read-only requirement normalizer.
+* **Same-origin messaging:** page/content bridges validate the current Coursera origin and target that exact origin with `postMessage`.
 
-The original browser methods are still called, so interception observes the request without preventing or replacing Coursera's normal network operation.
+The original browser networking methods are still called, so interception observes the request without preventing or replacing Coursera's normal network operation.
 
 ### Captured request context
 
-The content script retains only the following allowlisted values:
+The legacy content integration retains the current `x-csrf3-token` value only in the Coursera tab's content-script memory because the existing media-completion request depends on it. Other observed allowlisted request headers are represented by their names, not their values, in modular diagnostic state.
 
-| Header | Purpose |
-| --- | --- |
-| `x-csrf2-cookie` | Identifies the cookie associated with Coursera's CSRF2 validation. |
-| `x-csrf2-token` | Carries the current CSRF2 request token. |
-| `x-csrf3-token` | Carries Coursera's CSRF3 request token and remains compatible with the existing media-completion logic. |
-| `x-csrftoken` | Carries the standard web-framework CSRF token used by some Coursera endpoints. |
-| `x-requested-with` | Identifies the request as an XMLHttpRequest-style browser request. |
-
-These values are kept only in the content script's memory. They are not printed to the console, written to `chrome.storage`, committed to the repository, or displayed in the popup. Reloading or closing the Coursera tab clears them.
+The retained CSRF3 value is not written to `chrome.storage`, committed to the repository, or included in Dry Run reports. Reloading or closing the Coursera tab clears the in-memory content-script state.
 
 ### Request flow
 
 ```text
-Coursera creates a Fetch or XHR request
+Coursera creates a Fetch or XHR API request
         ↓
-intercept.js observes its method, URL, headers, body, and response
+intercept.js observes the request in MAIN world
         ↓
-Headers are normalized as lowercase [name, value] pairs
+URL/query data, header exposure, and response fields are minimized
         ↓
-content.js retains only the allowlisted request context
+No request body crosses the bridge; only the legacy-required CSRF3 value may cross
         ↓
-Existing features can use the latest captured Coursera session data
+content.js keeps legacy mutation context while CourseraReadRuntime keeps sanitized read-only state
 ```
 
-The media-completion request currently continues to send its existing `x-csrf3-token` header. The additional CSRF2, framework CSRF, and request-type values are now captured and ready for the next compatibility update, but are not yet attached to completion requests.
+The media-completion path continues to use the existing `x-csrf3-token` behavior. The pre-merge refactor intentionally does not expand or redesign mutation/completion behavior.
 
 ### Activating interceptor updates
 
@@ -159,8 +157,10 @@ API keys are stored in `chrome.storage.local` in your Chrome profile and are sen
 
 | File | Responsibility |
 | --- | --- |
-| `intercept.js` | Runs in Coursera's main page context and normalizes Fetch/XHR request information. |
-| `content.js` | Receives intercepted messages, retains the allowlisted request context, extracts course content, and applies supported page actions. |
+| `intercept.js` | Runs in Coursera's main page context and emits minimized Fetch/XHR request/response metadata. |
+| `intercept-policy.js` | Restricts eligible Coursera API traffic and minimizes URL, header, and response data. |
+| `content.js` | Retains legacy mutation integration and the minimal session context still required by those paths. |
+| `content-adapters.js` | Owns the modular read-only runtime, SPA course-state synchronization, and diagnostics integration. |
 | `background.js` | Coordinates AI-provider requests and extension background behavior. |
 | `popup.html` / `popup.js` | Provides the extension controls, provider configuration, and user feedback. |
 | `ai-providers.js` | Defines supported AI providers, models, endpoints, and request adapters. |

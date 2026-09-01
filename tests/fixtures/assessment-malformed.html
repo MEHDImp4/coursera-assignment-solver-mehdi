@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sanitized malformed assessment fixture</title>
+</head>
+<body>
+  <section data-testid="part-Submission_MultipleChoiceQuestion">
+    <div class="fixture-note">Missing prompt on purpose</div>
+    <label class="rc-Option">
+      <input type="radio" name="malformed-missing-prompt">
+      <span data-testid="cml-viewer">Ignored option</span>
+    </label>
+  </section>
+
+  <section data-testid="part-Submission_TextQuestion">
+    <div id="prompt-malformed-2"><div data-testid="cml-viewer">Synthetic recoverable text question</div></div>
+    <label class="rc-Option">
+      <span data-testid="cml-viewer">Broken option without input</span>
+    </label>
+    <input type="text" value="recoverable-fixture-value">
+  </section>
+
+  <section class="css-12u8wr5">
+    <div class="fixture-note">Legacy candidate missing prompt on purpose</div>
+  </section>
+</body>
+</html>
