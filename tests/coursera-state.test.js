@@ -126,6 +126,36 @@ test("ingests sanitized interceptor messages without exposing account or header 
   assert.equal(serialized.includes("123456"), false);
 });
 
+test("course changes reset observed request and user-context metadata", () => {
+  const state = createCourseState();
+  state.ingestInterceptMessage({
+    source: INTERCEPT_SOURCE,
+    request: {
+      url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-a",
+      headerNames: ["x-csrf3-token"]
+    },
+    response: {
+      ...materials("item-a"),
+      context: {
+        dispatcher: {
+          stores: {
+            ApplicationStore: {
+              userData: { id: 42 }
+            }
+          }
+        }
+      }
+    }
+  }, "https://www.coursera.org/learn/course-a/home");
+
+  assert.deepEqual(state.snapshot().observedHeaderNames, ["x-csrf3-token"]);
+  assert.equal(state.snapshot().hasUserContext, true);
+
+  state.syncLocation("https://www.coursera.org/learn/course-b/home");
+  assert.deepEqual(state.snapshot().observedHeaderNames, []);
+  assert.equal(state.snapshot().hasUserContext, false);
+});
+
 test("active page route wins over intercepted background-course traffic", () => {
   const state = createCourseState();
   state.syncLocation("https://www.coursera.org/learn/course-a/home");
@@ -138,7 +168,18 @@ test("active page route wins over intercepted background-course traffic", () => 
       url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-b",
       headerNames: ["x-requested-with"]
     },
-    response: materials("item-b")
+    response: {
+      ...materials("item-b"),
+      context: {
+        dispatcher: {
+          stores: {
+            ApplicationStore: {
+              userData: { id: 999 }
+            }
+          }
+        }
+      }
+    }
   };
 
   assert.equal(
@@ -147,23 +188,41 @@ test("active page route wins over intercepted background-course traffic", () => 
   );
   assert.equal(state.snapshot().courseSlug, "course-a");
   assert.equal(state.snapshot().courseRevision, revision);
+  assert.deepEqual(state.snapshot().observedHeaderNames, []);
+  assert.equal(state.snapshot().hasUserContext, false);
   assert.equal(state.getCourseMaterials("course-a").linked["onDemandCourseMaterialItems.v2"][0].id, "item-a");
   assert.equal(state.getCourseMaterials("course-b"), null);
 });
 
-test("active off-course location prevents intercepted traffic from recreating course state", () => {
+test("active off-course location prevents intercepted traffic from recreating course state or metadata", () => {
   const state = createCourseState();
   state.syncLocation("https://www.coursera.org/learn/course-a/home");
 
   state.ingestInterceptMessage({
     source: INTERCEPT_SOURCE,
-    request: { url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-b" },
-    response: materials("item-b")
+    request: {
+      url: "https://www.coursera.org/api/onDemandCourseMaterials.v2/?slug=course-b",
+      headerNames: ["x-csrf3-token"]
+    },
+    response: {
+      ...materials("item-b"),
+      context: {
+        dispatcher: {
+          stores: {
+            ApplicationStore: {
+              userData: { id: 999 }
+            }
+          }
+        }
+      }
+    }
   }, "https://www.coursera.org/account-settings");
 
   assert.equal(state.snapshot().courseSlug, "");
   assert.equal(state.snapshot().onCourseRoute, false);
   assert.equal(state.snapshot().hasCourseMaterials, false);
+  assert.deepEqual(state.snapshot().observedHeaderNames, []);
+  assert.equal(state.snapshot().hasUserContext, false);
 });
 
 test("ignores unrelated window messages", () => {
