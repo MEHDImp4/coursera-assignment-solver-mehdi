@@ -63,18 +63,12 @@
   }
 
   function summarizeIssue(issue, index) {
-    if (typeof issue === "string") {
-      return { index: index + 1, message: issue.trim().slice(0, 240) || "Parser issue" };
-    }
-
-    if (!issue || typeof issue !== "object") {
-      return { index: index + 1, message: "Parser issue" };
-    }
-
     const summary = {
       index: index + 1,
-      message: normalizedText(issue.message || issue.reason || issue.error).slice(0, 240) || "Parser issue"
+      message: "Parser issue"
     };
+
+    if (!issue || typeof issue !== "object") return summary;
 
     const questionNumber = Number(issue.questionNumber);
     if (Number.isInteger(questionNumber) && questionNumber > 0) {
