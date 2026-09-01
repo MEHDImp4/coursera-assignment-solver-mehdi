@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-test("migrates a legacy Gemini key and returns normalized answers through messaging", async () => {
+test("migrates a legacy Gemini key, removes the duplicate, and returns normalized answers through messaging", async () => {
   const storage = { userApiKey: "legacy-gemini-key" };
   let messageListener;
   let requestedUrl;
@@ -24,6 +24,9 @@ test("migrates a legacy Gemini key and returns normalized answers through messag
         },
         async set(update) {
           Object.assign(storage, update);
+        },
+        async remove(key) {
+          delete storage[key];
         }
       }
     }
@@ -61,5 +64,6 @@ test("migrates a legacy Gemini key and returns normalized answers through messag
   });
   assert.equal(storage.aiProvider, "gemini");
   assert.equal(storage.aiProviderSettings.gemini.apiKey, "legacy-gemini-key");
+  assert.equal("userApiKey" in storage, false);
   assert.match(requestedUrl, /gemini-3\.7-flash:generateContent$/);
 });
