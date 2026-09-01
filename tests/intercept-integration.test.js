@@ -63,6 +63,10 @@ function createContext(originalFetch) {
   return context;
 }
 
+function normalizeVmValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 test("passive fetch inspection never replaces a successful page response with an interceptor error", async () => {
   const response = {
     url: "https://www.coursera.org/api/example.v1?slug=sample",
@@ -98,7 +102,7 @@ test("XHR interception preserves page headers but retains only allowlisted metad
     ["x-csrf3-token", "csrf-value"],
     ["x-requested-with", "XMLHttpRequest"]
   ]);
-  assert.deepEqual(xhr._interceptHeaders, [
+  assert.deepEqual(normalizeVmValue(xhr._interceptHeaders), [
     ["x-csrf3-token", "csrf-value"],
     ["x-requested-with", "XMLHttpRequest"]
   ]);
