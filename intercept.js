@@ -27,7 +27,9 @@
         if (initParams?.headers) {
             new Headers(initParams.headers).forEach((value, name) => headers.set(name, value));
         }
-        return normalizeHeaders(headers);
+        return normalizeHeaders(headers).filter(([name]) => (
+            policy.CAPTURED_HEADER_NAMES.has(String(name || "").toLowerCase())
+        ));
     }
 
     class InterceptBus {
@@ -134,8 +136,9 @@
     });
 
     window.fetch = async function (resource, initParams) {
+        const response = await originalFetch.apply(this, arguments);
+
         try {
-            const response = await originalFetch.apply(this, arguments);
             const requestUrl = response.url || (resource instanceof Request ? resource.url : String(resource || ""));
             const safeUrl = policy.normalizeCourseraApiUrl(requestUrl, window.location.href);
             if (!safeUrl) return response;
@@ -157,12 +160,11 @@
                 method: initParams?.method || (resource instanceof Request ? resource.method : "GET"),
                 headers: getFetchRequestHeaders(resource, initParams)
             });
-
-            return response;
         } catch (error) {
-            console.error("Fetch intercept error:", error);
-            throw error;
+            console.warn("AutoCoursera passive fetch inspection failed; returning the original response.", error);
         }
+
+        return response;
     };
 
     XMLHttpRequest.prototype.open = function (method, url) {
@@ -175,12 +177,13 @@
 
     XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
         const result = originalXHRSetRequestHeader.apply(this, arguments);
+        const normalizedName = String(name).toLowerCase();
+        if (!policy.CAPTURED_HEADER_NAMES.has(normalizedName)) return result;
 
         if (!Array.isArray(this._interceptHeaders)) {
             this._interceptHeaders = [];
         }
 
-        const normalizedName = String(name).toLowerCase();
         const normalizedValue = String(value);
         const existingHeader = this._interceptHeaders.find(
             ([headerName]) => headerName === normalizedName
@@ -197,28 +200,32 @@
 
     XMLHttpRequest.prototype.send = function () {
         this.addEventListener("load", function () {
-            const rawUrl = this.responseURL || this._interceptUrl;
-            const safeUrl = policy.normalizeCourseraApiUrl(rawUrl, window.location.href);
-            if (!safeUrl) return;
+            try {
+                const rawUrl = this.responseURL || this._interceptUrl;
+                const safeUrl = policy.normalizeCourseraApiUrl(rawUrl, window.location.href);
+                if (!safeUrl) return;
 
-            const contentType = this.getResponseHeader("content-type") || "";
-            let responseData;
+                const contentType = this.getResponseHeader("content-type") || "";
+                let responseData;
 
-            if (contentType.includes("application/json")) {
-                try {
-                    responseData = JSON.parse(this.responseText);
-                } catch {
-                    // Ignore response bodies that are not valid JSON.
+                if (contentType.includes("application/json")) {
+                    try {
+                        responseData = JSON.parse(this.responseText);
+                    } catch {
+                        // Ignore response bodies that are not valid JSON.
+                    }
                 }
-            }
 
-            messageBus.send(safeUrl, contentType, responseData, {
-                url: safeUrl,
-                method: this._interceptMethod,
-                headers: Array.isArray(this._interceptHeaders)
-                    ? this._interceptHeaders.map(([name, value]) => [name, value])
-                    : []
-            });
+                messageBus.send(safeUrl, contentType, responseData, {
+                    url: safeUrl,
+                    method: this._interceptMethod,
+                    headers: Array.isArray(this._interceptHeaders)
+                        ? this._interceptHeaders.map(([name, value]) => [name, value])
+                        : []
+                });
+            } catch (error) {
+                console.warn("AutoCoursera passive XHR inspection failed.", error);
+            }
         });
 
         return originalXHRSend.apply(this, arguments);
