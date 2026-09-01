@@ -64,6 +64,11 @@
       materialsSlug = "";
     }
 
+    function resetObservations() {
+      observedHeaderNames = new Set();
+      observedUserContext = false;
+    }
+
     function setCourseSlug(nextSlug) {
       const normalized = String(nextSlug || "").trim();
       if (!normalized) return courseSlug;
@@ -71,16 +76,18 @@
 
       courseSlug = normalized;
       courseRevision += 1;
+      resetObservations();
       if (materialsSlug && materialsSlug !== normalized) invalidateMaterials();
       return courseSlug;
     }
 
     function clearCourse() {
-      if (!courseSlug && !materials && !materialsSlug) return false;
+      const hadCourseState = Boolean(courseSlug || materials || materialsSlug);
       courseSlug = "";
       invalidateMaterials();
-      courseRevision += 1;
-      return true;
+      resetObservations();
+      if (hadCourseState) courseRevision += 1;
+      return hadCourseState;
     }
 
     function syncLocation(value) {
@@ -120,8 +127,12 @@
       const activeSlug = hasActiveLocation ? courseSlugFromUrl(activeLocation) : "";
 
       if (hasActiveLocation) {
-        if (activeSlug) setCourseSlug(activeSlug);
-        else clearCourse();
+        if (!activeSlug) {
+          clearCourse();
+          return true;
+        }
+        setCourseSlug(activeSlug);
+        if (requestSlug && requestSlug !== activeSlug) return true;
       } else if (requestSlug) {
         setCourseSlug(requestSlug);
       }
