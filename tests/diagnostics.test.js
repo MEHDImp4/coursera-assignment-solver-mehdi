@@ -50,17 +50,27 @@ test("summarizes question capabilities without copying content", () => {
   });
 });
 
-test("sanitizes parser issue details", () => {
-  assert.deepEqual(summarizeIssue({
+test("sanitizes parser issue details without exporting arbitrary error text", () => {
+  const summary = summarizeIssue({
     questionNumber: 4,
     type: "missing-options",
-    message: "Could not map options",
+    message: "Secret prompt fragment: private answer text",
     rawHtml: "<div>private page data</div>"
-  }, 0), {
+  }, 0);
+
+  assert.deepEqual(summary, {
     index: 1,
-    message: "Could not map options",
+    message: "Parser issue",
     questionNumber: 4,
     code: "missing-options"
+  });
+  const serialized = JSON.stringify(summary);
+  assert.equal(serialized.includes("Secret prompt fragment"), false);
+  assert.equal(serialized.includes("private answer text"), false);
+  assert.equal(serialized.includes("private page data"), false);
+  assert.deepEqual(summarizeIssue("Secret page text", 1), {
+    index: 2,
+    message: "Parser issue"
   });
 });
 
