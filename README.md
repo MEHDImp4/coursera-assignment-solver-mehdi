@@ -1,23 +1,20 @@
-> [!CAUTION]
-> ### ⚠️ Disclaimer: For Educational Purposes Only
-> This extension was created strictly for **educational and learning purposes** to explore browser extension development, DOM manipulation, and API interception. 
-> 
-> * **No Liability:** The creator of this extension is not responsible for any consequences that may arise from using this tool.
-> * **Academic Integrity:** Coursera has strict policies regarding academic integrity. Using this tool to automatically complete courses or solve quizzes may violate Coursera's Terms of Service and Honor Code.
-> By using this open-source software, you agree that you are taking full responsibility for your own actions.
+> [!WARNING]
+> **Academic integrity:** This experiment includes features that can automate course activities and draft or fill answers. Use these capabilities only where explicitly permitted by your instructor and course. Do not submit generated answers as your own. Check Coursera's current terms and the course policy before use.
+>
+> This project explores browser-extension development and course-page workflows. The maintainer is not responsible for third-party use.
 
-# Coursera Auto Solver 🎓
+# Coursera Study Workflow Extension
 
 <div align="center">
   <img src="icons/icon128.png" alt="Coursera Auto Solver Icon" width="128" />
-  <p><em>Speedrun your courses smoothly</em></p>
+  <p><em>A browser-extension experiment for study workflows</em></p>
 </div>
 
 ![Coursera Auto Solver UI](assets/image.png)
 
 🎬 **[Watch the Demo on YouTube](https://www.youtube.com/watch?v=a060UX8dlHE)**
 
-A sleek, lightweight Chrome Extension to automate and help you navigate your Coursera courses with ease. 
+An experimental Chrome extension for Coursera that explores course navigation, activity-status automation, question extraction, and optional AI-assisted answer drafting. Features that change course progress or interact with graded work should only be used with explicit authorization. 
 
 
 ## ✨ Features
